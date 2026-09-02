@@ -23,6 +23,7 @@ from openpyxl.utils import get_column_letter
 
 from security import get_odoo_credentials
 from permissions import load_permissions
+from showroom_config import get_showroom_category, load_showroom_types
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -738,9 +739,15 @@ def generate_report(
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = os.path.join(export_dir, f"odoo_report_{ts}.xlsx")
 
+    custom_types_map = load_showroom_types()
+    sh_code_map = {s['name']: s.get('code', '') for s in all_showrooms}
+
     C_HDR_MAIN       = "2E75B6"
     C_HDR_SHOWROOM   = "1F4E79"
     C_HDR_SHOWROOM_L = "2E75B6"
+    C_HDR_CARE       = "179B9B"   # Vibrant soft turquoise / فيروزي فاتح
+    C_HDR_CARE_L     = "2AA49C"   # Light turquoise sub-header
+    C_CARE_ROW_BG    = "E6F7F6"
     C_HDR_SUMMARY    = "833C0C"
     C_ALT            = "F2F5F9"
     C_TOTALS_BG      = "FFF2CC"
@@ -751,6 +758,9 @@ def generate_report(
     FILL_HDR_MAIN     = PatternFill("solid", fgColor=C_HDR_MAIN)
     FILL_HDR_SHOWROOM = PatternFill("solid", fgColor=C_HDR_SHOWROOM)
     FILL_HDR_SUB      = PatternFill("solid", fgColor=C_HDR_SHOWROOM_L)
+    FILL_HDR_CARE     = PatternFill("solid", fgColor=C_HDR_CARE)
+    FILL_HDR_CARE_SUB = PatternFill("solid", fgColor=C_HDR_CARE_L)
+    FILL_CARE_ROW     = PatternFill("solid", fgColor=C_CARE_ROW_BG)
     FILL_HDR_SUMMARY  = PatternFill("solid", fgColor=C_HDR_SUMMARY)
     FILL_ALT          = PatternFill("solid", fgColor=C_ALT)
     FILL_TOTALS       = PatternFill("solid", fgColor=C_TOTALS_BG)
@@ -946,15 +956,21 @@ def generate_report(
         pair_count = len(pair_cols)
         sh_start_col = col_idx
 
+        sh_code = sh_code_map.get(sh_name, '')
+        is_care = (get_showroom_category(sh_code, sh_name, custom_types_map) == 'care')
+
+        fill_sh  = FILL_HDR_CARE if is_care else FILL_HDR_SHOWROOM
+        fill_sub = FILL_HDR_CARE_SUB if is_care else FILL_HDR_SUB
+
         cell_sh = ws.cell(row=1, column=sh_start_col, value=sh_name)
-        cell_sh.fill      = FILL_HDR_SHOWROOM
+        cell_sh.fill      = fill_sh
         cell_sh.font      = FONT_HDR_WHITE
         cell_sh.alignment = ALIGN_CTR
         cell_sh.border    = BORDER_DATA
 
         if USE_TWO_ROWS and pair_count == 2:
             cell_sh2 = ws.cell(row=1, column=sh_start_col + 1)
-            cell_sh2.fill   = FILL_HDR_SHOWROOM
+            cell_sh2.fill   = fill_sh
             cell_sh2.border = BORDER_DATA
             ws.merge_cells(start_row=1, start_column=sh_start_col,
                            end_row=1, end_column=sh_start_col + 1)
@@ -965,7 +981,7 @@ def generate_report(
 
             if USE_TWO_ROWS:
                 cell2 = ws.cell(row=2, column=col_idx, value=sub_label)
-                cell2.fill      = FILL_HDR_SUB
+                cell2.fill      = fill_sub
                 cell2.font      = FONT_HDR_SUB
                 cell2.alignment = ALIGN_CTR
                 cell2.border    = BORDER_DATA
@@ -1155,7 +1171,7 @@ def generate_report(
         ws2 = wb.create_sheet(title="ملخص المعارض والفروع")
         ws2.views.sheetView[0].rightToLeft = True
 
-        hdr2 = ["كود الفرع", "اسم المعرض / الفرع", "إجمالي الرصيد (قطع)",
+        hdr2 = ["كود الفرع", "اسم المعرض / الفرع", "تصنيف الفرع", "إجمالي الرصيد (قطع)",
                 "قيمة المخزون بالتكلفة (ر.س)", "قيمة المبيعات بالبيع (ر.س)", "إجمالي المبيعات (قطع)"]
         for c_i, h_text in enumerate(hdr2, 1):
             c = ws2.cell(row=1, column=c_i, value=h_text)
@@ -1169,11 +1185,14 @@ def generate_report(
         s_rows = sorted(branch_summary.values(), key=lambda x: x['total_on_hand'], reverse=True)
         for r_i, s_data in enumerate(s_rows, 2):
             is_alt = (r_i % 2 == 1)
-            row_fill = FILL_ALT if is_alt else None
+            is_care = (get_showroom_category(s_data['code'], s_data['name'], custom_types_map) == 'care')
+            type_label = "🌿 عناية" if is_care else "🏬 معارض"
+            row_fill = FILL_CARE_ROW if is_care else (FILL_ALT if is_alt else None)
 
             vals = [
                 (s_data['code'], ALIGN_CTR, "@"),
                 (s_data['name'], ALIGN_RT, "@"),
+                (type_label, ALIGN_CTR, "@"),
                 (s_data['total_on_hand'], ALIGN_CTR, "#,##0"),
                 (s_data['total_cost_value'], ALIGN_RT, "#,##0.00"),
                 (s_data['total_sales_value'], ALIGN_RT, "#,##0.00"),
@@ -1194,10 +1213,11 @@ def generate_report(
         tot_cells = [
             (1, "▶ الإجمالي العام", ALIGN_CTR, "@", False),
             (2, "", ALIGN_RT, "@", False),
-            (3, f"=SUM(C2:C{last_r})", ALIGN_CTR, "#,##0", True),
-            (4, f"=SUM(D2:D{last_r})", ALIGN_RT, "#,##0.00", True),
+            (3, "", ALIGN_CTR, "@", False),
+            (4, f"=SUM(D2:D{last_r})", ALIGN_CTR, "#,##0", True),
             (5, f"=SUM(E2:E{last_r})", ALIGN_RT, "#,##0.00", True),
-            (6, f"=SUM(F2:F{last_r})", ALIGN_CTR, "#,##0", True),
+            (6, f"=SUM(F2:F{last_r})", ALIGN_RT, "#,##0.00", True),
+            (7, f"=SUM(G2:G{last_r})", ALIGN_CTR, "#,##0", True),
         ]
         for c_i, v, align, nfmt, is_formula in tot_cells:
             c = ws2.cell(row=tot_r, column=c_i, value=v)
@@ -1208,7 +1228,7 @@ def generate_report(
             c.border = BORDER_TOTALS
 
         ws2.row_dimensions[tot_r].height = 22
-        col_w2 = [14, 28, 20, 26, 26, 20]
+        col_w2 = [14, 28, 16, 20, 26, 26, 20]
         for c_i, w in enumerate(col_w2, 1):
             ws2.column_dimensions[get_column_letter(c_i)].width = w
 

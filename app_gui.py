@@ -19,6 +19,7 @@ import customtkinter as ctk
 from licensing import get_machine_id, is_activated, activate_device
 from permissions import ALL_PROTECTED_FIELDS, load_permissions, save_permissions, verify_admin_password
 from exporter_engine import get_active_showrooms, get_all_product_tags, generate_report
+from showroom_config import get_showroom_category, load_showroom_types, save_showroom_types, is_default_care_showroom
 
 
 # ─────────────────────────────────────────────────────────
@@ -674,17 +675,35 @@ class OdooReportApp(ctk.CTk):
     # ─── TAB: SHOWROOMS ───────────────────────────────────────
     def _build_tab_showrooms(self, parent):
         top_bar = ctk.CTkFrame(parent, fg_color="transparent")
-        top_bar.pack(fill="x", padx=8, pady=8)
+        top_bar.pack(fill="x", padx=8, pady=(8, 4))
 
         ctk.CTkLabel(top_bar, text="اختر المعارض المراد تضمينها في التقرير:",
                      font=ctk.CTkFont(APP_FONT, 13, "bold")).pack(side="right", padx=6)
 
-        ctk.CTkButton(top_bar, text="إلغاء تحديد الكل", width=120,
+        ctk.CTkButton(top_bar, text="⚙️  تعديل نوع المعارض (معارض / عناية)",
+                      fg_color="#148F77", hover_color="#117864",
+                      font=ctk.CTkFont(APP_FONT, 11, "bold"),
+                      height=28, command=self._open_showroom_types_dialog).pack(side="left", padx=4)
+
+        ctk.CTkButton(top_bar, text="إلغاء تحديد الكل", width=100,
                       fg_color=BRAND_SLATE, hover_color=BRAND_SLATE_HOVER,
-                      height=28, command=self._deselect_showrooms).pack(side="left", padx=4)
-        ctk.CTkButton(top_bar, text="✅ تحديد الكل", width=120,
+                      height=28, font=ctk.CTkFont(APP_FONT, 11),
+                      command=self._deselect_showrooms).pack(side="left", padx=4)
+
+        ctk.CTkButton(top_bar, text="🌿 عناية فقط", width=95,
+                      fg_color="#179B9B", hover_color="#148F77",
+                      height=28, font=ctk.CTkFont(APP_FONT, 11),
+                      command=self._select_only_care).pack(side="left", padx=4)
+
+        ctk.CTkButton(top_bar, text="🏬 معارض فقط", width=95,
+                      fg_color=BRAND_SLATE, hover_color=BRAND_SLATE_HOVER,
+                      height=28, font=ctk.CTkFont(APP_FONT, 11),
+                      command=self._select_only_showrooms).pack(side="left", padx=4)
+
+        ctk.CTkButton(top_bar, text="✅ تحديد الكل", width=95,
                       fg_color=BRAND_GREEN, hover_color=BRAND_GREEN_HOVER,
-                      height=28, command=self._select_showrooms).pack(side="left", padx=4)
+                      height=28, font=ctk.CTkFont(APP_FONT, 11),
+                      command=self._select_showrooms).pack(side="left", padx=4)
 
         self._sh_scroll = ctk.CTkScrollableFrame(parent, fg_color=("gray92", "#1A2230"),
                                                   corner_radius=8)
@@ -879,13 +898,115 @@ class OdooReportApp(ctk.CTk):
         self._f_name.delete(0, "end")
         self._tag_selector._clear_all()
 
-    def _select_showrooms(self):
-        for v in self.showroom_vars.values():
-            v.set(True)
+    def _select_only_showrooms(self):
+        custom_types = load_showroom_types()
+        for s in self.showrooms:
+            is_care = (get_showroom_category(s['code'], s['name'], custom_types) == 'care')
+            var = self.showroom_vars.get(s['id'])
+            if var:
+                var.set(not is_care)
 
-    def _deselect_showrooms(self):
-        for v in self.showroom_vars.values():
-            v.set(False)
+    def _select_only_care(self):
+        custom_types = load_showroom_types()
+        for s in self.showrooms:
+            is_care = (get_showroom_category(s['code'], s['name'], custom_types) == 'care')
+            var = self.showroom_vars.get(s['id'])
+            if var:
+                var.set(is_care)
+
+    def _open_showroom_types_dialog(self):
+        """Interactive modal to classify showrooms as 'معارض' or 'عناية'."""
+        if not self.showrooms:
+            messagebox.showinfo("تنبيه", "جاري تحميل قائمة المعارض، يرجى الانتظار لحظات...")
+            return
+
+        dlg = ctk.CTkToplevel(self)
+        dlg.title("🏢 تعديل تصنيف فروع الشركة (معارض / عناية)")
+        dlg.geometry("600x640")
+        dlg.resizable(True, True)
+        dlg.grab_set()
+
+        # Header
+        hdr = ctk.CTkFrame(dlg, fg_color=BRAND_DARK, corner_radius=0)
+        hdr.pack(fill="x")
+        ctk.CTkLabel(hdr, text="🏢  تصنيف فروع الشركة (معارض / عناية)",
+                     font=ctk.CTkFont(APP_FONT, 14, "bold"), text_color="white").pack(anchor="e", padx=16, pady=(10, 2))
+        ctk.CTkLabel(hdr, text="حدد نوع كل فرع (معارض أو عناية). فروع العناية تُلوَّن باللون الفيروزي الفاتح في التقرير.",
+                     font=ctk.CTkFont(APP_FONT, 10), text_color="gray70").pack(anchor="e", padx=16, pady=(0, 10))
+
+        # Current types
+        current_types = load_showroom_types()
+        var_map = {}
+
+        # Scrollable table
+        scroll = ctk.CTkScrollableFrame(dlg, fg_color=("gray95", "#141D29"))
+        scroll.pack(fill="both", expand=True, padx=12, pady=8)
+
+        # Table Header
+        th = ctk.CTkFrame(scroll, fg_color=BRAND_BLUE, corner_radius=4)
+        th.pack(fill="x", pady=(0, 6))
+        ctk.CTkLabel(th, text="اسم المعرض / الفرع", font=ctk.CTkFont(APP_FONT, 11, "bold"), text_color="white").pack(side="right", padx=14, pady=5)
+        ctk.CTkLabel(th, text="نوع الفرع", font=ctk.CTkFont(APP_FONT, 11, "bold"), text_color="white").pack(side="left", padx=45, pady=5)
+
+        for s in self.showrooms:
+            code = s['code']
+            name = s['name']
+            current_cat = get_showroom_category(code, name, current_types)
+
+            row_frame = ctk.CTkFrame(scroll, fg_color=("white", "#1B2838"), corner_radius=4)
+            row_frame.pack(fill="x", pady=2)
+
+            lbl_text = f"[{code}]  {name}"
+            ctk.CTkLabel(row_frame, text=lbl_text, font=ctk.CTkFont(APP_FONT, 11)).pack(side="right", padx=10, pady=6)
+
+            seg_var = ctk.StringVar(value="عناية" if current_cat == "care" else "معارض")
+            var_map[code] = (seg_var, name)
+
+            seg = ctk.CTkSegmentedButton(
+                row_frame,
+                values=["معارض", "عناية"],
+                variable=seg_var,
+                font=ctk.CTkFont(APP_FONT, 10, "bold"),
+                selected_color="#179B9B",
+                selected_hover_color="#148F77",
+                width=140
+            )
+            seg.pack(side="left", padx=10, pady=4)
+
+        # Bottom buttons
+        btn_bar = ctk.CTkFrame(dlg, fg_color="transparent")
+        btn_bar.pack(fill="x", padx=12, pady=10)
+
+        def _reset_default():
+            for code, (var, name) in var_map.items():
+                is_care = is_default_care_showroom(code, name)
+                var.set("عناية" if is_care else "معارض")
+
+        def _save():
+            new_types = {}
+            for code, (var, name) in var_map.items():
+                cat = "care" if var.get() == "عناية" else "showroom"
+                new_types[code] = cat
+                new_types[name] = cat
+            save_showroom_types(new_types)
+            self._populate_showrooms()
+            dlg.destroy()
+            messagebox.showinfo("تم الحفظ", "✅ تم حفظ تصنيفات المعارض بنجاح!")
+
+        ctk.CTkButton(btn_bar, text="🔄 استعادة الافتراضي",
+                      fg_color=BRAND_SLATE, hover_color=BRAND_SLATE_HOVER,
+                      font=ctk.CTkFont(APP_FONT, 11),
+                      command=_reset_default).pack(side="left", padx=4)
+
+        ctk.CTkButton(btn_bar, text="❌ إلغاء", width=80,
+                      fg_color=BRAND_RED, hover_color=BRAND_RED_HOVER,
+                      font=ctk.CTkFont(APP_FONT, 11),
+                      command=dlg.destroy).pack(side="left", padx=4)
+
+        ctk.CTkButton(btn_bar, text="💾  حفظ التصنيفات",
+                      fg_color=BRAND_GREEN, hover_color=BRAND_GREEN_HOVER,
+                      font=ctk.CTkFont(APP_FONT, 12, "bold"),
+                      command=_save).pack(side="right", fill="x", expand=True, padx=(10, 0))
 
     def _load_showrooms_async(self):
         def _worker():
@@ -903,19 +1024,65 @@ class OdooReportApp(ctk.CTk):
         for w in self._sh_scroll.winfo_children():
             w.destroy()
 
-        row, col = 0, 0
+        custom_types = load_showroom_types()
+
+        # Split showrooms into Care and Standard Showrooms
+        care_showrooms = []
+        std_showrooms = []
         for s in self.showrooms:
-            var = ctk.BooleanVar(value=True)
-            self.showroom_vars[s['id']] = var
-            chk = ctk.CTkCheckBox(self._sh_scroll,
-                                   text=f"[{s['code']}] {s['name']}",
-                                   variable=var,
-                                   font=ctk.CTkFont(APP_FONT, 11))
-            chk.grid(row=row, column=col, padx=12, pady=4, sticky="e")
-            col += 1
-            if col >= 3:
-                col = 0
-                row += 1
+            if get_showroom_category(s['code'], s['name'], custom_types) == 'care':
+                care_showrooms.append(s)
+            else:
+                std_showrooms.append(s)
+
+        # 1. Care Showrooms section
+        if care_showrooms:
+            care_header = ctk.CTkFrame(self._sh_scroll, fg_color=("#D1F2EB", "#0E3A36"), corner_radius=6)
+            care_header.pack(fill="x", padx=6, pady=(4, 6))
+            ctk.CTkLabel(care_header, text=f"🌿  فروع ومراكز العناية ({len(care_showrooms)} فروع) — تظهر بخلفية فيروزية في التقرير",
+                         font=ctk.CTkFont(APP_FONT, 12, "bold"), text_color=("#0E6251", "#76D7C4")).pack(anchor="e", padx=12, pady=6)
+
+            care_grid = ctk.CTkFrame(self._sh_scroll, fg_color="transparent")
+            care_grid.pack(fill="x", padx=6, pady=(0, 10))
+
+            row, col = 0, 0
+            for s in care_showrooms:
+                var = ctk.BooleanVar(value=True)
+                self.showroom_vars[s['id']] = var
+                chk = ctk.CTkCheckBox(care_grid,
+                                       text=f"[{s['code']}] {s['name']}",
+                                       variable=var,
+                                       fg_color="#179B9B", hover_color="#148F77",
+                                       font=ctk.CTkFont(APP_FONT, 11, "bold"))
+                chk.grid(row=row, column=col, padx=12, pady=5, sticky="e")
+                col += 1
+                if col >= 3:
+                    col = 0
+                    row += 1
+
+        # 2. Standard Showrooms section
+        if std_showrooms:
+            std_header = ctk.CTkFrame(self._sh_scroll, fg_color=("gray85", "#1B2A3D"), corner_radius=6)
+            std_header.pack(fill="x", padx=6, pady=(4, 6))
+            ctk.CTkLabel(std_header, text=f"🏬  المعارض الرئيسية ({len(std_showrooms)} معرض)",
+                         font=ctk.CTkFont(APP_FONT, 12, "bold"), text_color=BRAND_BLUE).pack(anchor="e", padx=12, pady=6)
+
+            std_grid = ctk.CTkFrame(self._sh_scroll, fg_color="transparent")
+            std_grid.pack(fill="x", padx=6, pady=(0, 8))
+
+            row, col = 0, 0
+            for s in std_showrooms:
+                var = ctk.BooleanVar(value=True)
+                self.showroom_vars[s['id']] = var
+                chk = ctk.CTkCheckBox(std_grid,
+                                       text=f"[{s['code']}] {s['name']}",
+                                       variable=var,
+                                       font=ctk.CTkFont(APP_FONT, 11))
+                chk.grid(row=row, column=col, padx=12, pady=4, sticky="e")
+                col += 1
+                if col >= 3:
+                    col = 0
+                    row += 1
 
     def _load_tags_async(self):
         def _worker():

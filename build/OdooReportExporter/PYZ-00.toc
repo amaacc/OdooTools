@@ -3260,6 +3260,7 @@
   ('shlex',
    'C:\\Users\\Abdullah\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\shlex.py',
    'PYMODULE'),
+  ('showroom_config', 'c:\\OdooDB\\showroom_config.py', 'PYMODULE'),
   ('shutil',
    'C:\\Users\\Abdullah\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\shutil.py',
    'PYMODULE'),
