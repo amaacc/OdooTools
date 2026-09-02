@@ -1,7 +1,9 @@
 """
-OdooReportExporter – Main GUI
+OdooReportExporter – Main GUI (v1.01)
 Designed & developed by: عبدالله الخطيب (Abdullah Al-Khatib)
 """
+
+APP_VERSION = "v1.01"
 
 import os
 import sys
@@ -279,7 +281,7 @@ class OdooReportApp(ctk.CTk):
         ctk.set_appearance_mode(self.settings.get("theme", "Dark"))
         ctk.set_default_color_theme("blue")
 
-        self.title("نظام تصدير تقارير منتجات ومعارض Odoo — شركة العسلي التجارية")
+        self.title(f"نظام تصدير تقارير منتجات ومعارض Odoo — شركة العسلي التجارية [{APP_VERSION}]")
         self._center_window(1060, 680)
         self.minsize(900, 540)
 
@@ -524,6 +526,7 @@ class OdooReportApp(ctk.CTk):
         self._col_totals = ctk.BooleanVar(value=True)
         self._col_vendors = ctk.BooleanVar(value=True)
         self._col_showrooms = ctk.BooleanVar(value=True)
+        self._col_analytics = ctk.BooleanVar(value=True)
 
         col_options = [
             (self._col_basic, "البيانات الأساسية"),
@@ -531,6 +534,7 @@ class OdooReportApp(ctk.CTk):
             (self._col_totals, "الإجماليات"),
             (self._col_vendors, "بيانات الموردين"),
             (self._col_showrooms, "تفاصيل المعارض"),
+            (self._col_analytics, "تحليلات وتوصيات المخزون"),
         ]
         for var, label in col_options:
             ctk.CTkCheckBox(sidebar, text=label, variable=var,
@@ -941,7 +945,8 @@ class OdooReportApp(ctk.CTk):
             'pricing': self._col_price.get(),
             'totals': self._col_totals.get(),
             'vendors': self._col_vendors.get(),
-            'showrooms': self._col_showrooms.get() and bool(selected)
+            'showrooms': self._col_showrooms.get() and bool(selected),
+            'analytics': self._col_analytics.get()
         }
 
         period = self._period_var.get()

@@ -604,63 +604,63 @@ def generate_report(
                 row["إجمالي مبيعات المعارض"] = sh_sl_total
 
         # ── Smart Inventory Analytics & Supply Chain Suggestions ────────────
-        analysis_oh = sh_oh_total if column_options.get('showrooms', True) else qty_oh
-        analysis_sl = sh_sl_total if column_options.get('showrooms', True) else total_sold
-        monthly_sales = analysis_sl / 12.0
+        if column_options.get('analytics', True):
+            analysis_oh = sh_oh_total if column_options.get('showrooms', True) else qty_oh
+            analysis_sl = sh_sl_total if column_options.get('showrooms', True) else total_sold
+            monthly_sales = analysis_sl / 12.0
 
-        # 1. Product Status
-        if analysis_oh <= 0:
-            if analysis_sl > 0:
-                item_status = "نفد المخزون"
+            if analysis_oh <= 0:
+                if analysis_sl > 0:
+                    item_status = "نفد المخزون"
+                else:
+                    item_status = "غير متوفر"
+            elif analysis_sl <= 0:
+                item_status = "راكد"
             else:
-                item_status = "غير متوفر"
-        elif analysis_sl <= 0:
-            item_status = "راكد"
-        else:
-            days_cover = (analysis_oh / analysis_sl) * 365.0
-            if days_cover <= 20 or (analysis_oh <= 5 and analysis_sl >= 10):
-                item_status = "قارب على النفاذ"
-            elif days_cover <= 60 or monthly_sales >= 15:
-                item_status = "سريع الحركة"
-            elif days_cover >= 180:
-                item_status = "فائض المخزون"
-            else:
-                item_status = "متوازن"
-
-        # 2. Suggested 60-Day Reorder Quantity (Target buffer: 2 months demand)
-        target_60d = monthly_sales * 2.0
-        suggested_60d_qty = max(0.0, round(target_60d - analysis_oh))
-
-        # 3. Inter-branch transfer recommendations
-        transfer_recs = []
-        if column_options.get('showrooms', True) and target_showrooms:
-            deficits = []
-            surpluses = []
-            for s in target_showrooms:
-                s_id = s['id']
-                lot = s['lot_stock_id']
-                oh = stock_map.get((pid, lot), 0.0) if lot else 0.0
-                sl = showroom_sales.get(s_id, {}).get(pid, 0.0)
-                if oh <= 1 and sl > 0:
-                    deficits.append((s['name'], oh, sl))
-                elif oh >= 4 and (sl == 0 or oh > (sl / 12.0) * 4):
-                    surpluses.append((s['name'], oh, sl))
-
-            if deficits and surpluses:
-                deficits.sort(key=lambda x: x[2], reverse=True)
-                surpluses.sort(key=lambda x: x[1], reverse=True)
-                for i in range(min(len(deficits), len(surpluses), 2)):
-                    from_name = surpluses[i][0].replace("معرض ", "").replace("فرع ", "").strip()
-                    to_name   = deficits[i][0].replace("معرض ", "").replace("فرع ", "").strip()
-                    transfer_recs.append(f"من {from_name} إلى {to_name}")
-
-        transfer_note = " | ".join(transfer_recs) if transfer_recs else "─"
-
-        row["حالة الصنف"] = item_status
-        row["الطلب المقترح (60 يوم)"] = suggested_60d_qty
-        if column_options.get('showrooms', True):
-            row["توصيات المناقلة"] = transfer_note
-
+                days_cover = (analysis_oh / analysis_sl) * 365.0
+                if days_cover <= 20 or (analysis_oh <= 5 and analysis_sl >= 10):
+                    item_status = "قارب على النفاذ"
+                elif days_cover <= 60 or monthly_sales >= 15:
+                    item_status = "سريع الحركة"
+                elif days_cover >= 180:
+                    item_status = "فائض المخزون"
+                else:
+                    item_status = "متوازن"
+    
+            # 2. Suggested 60-Day Reorder Quantity (Target buffer: 2 months demand)
+            target_60d = monthly_sales * 2.0
+            suggested_60d_qty = max(0.0, round(target_60d - analysis_oh))
+    
+            # 3. Inter-branch transfer recommendations
+            transfer_recs = []
+            if column_options.get('showrooms', True) and target_showrooms:
+                deficits = []
+                surpluses = []
+                for s in target_showrooms:
+                    s_id = s['id']
+                    lot = s['lot_stock_id']
+                    oh = stock_map.get((pid, lot), 0.0) if lot else 0.0
+                    sl = showroom_sales.get(s_id, {}).get(pid, 0.0)
+                    if oh <= 1 and sl > 0:
+                        deficits.append((s['name'], oh, sl))
+                    elif oh >= 4 and (sl == 0 or oh > (sl / 12.0) * 4):
+                        surpluses.append((s['name'], oh, sl))
+    
+                if deficits and surpluses:
+                    deficits.sort(key=lambda x: x[2], reverse=True)
+                    surpluses.sort(key=lambda x: x[1], reverse=True)
+                    for i in range(min(len(deficits), len(surpluses), 2)):
+                        from_name = surpluses[i][0].replace("معرض ", "").replace("فرع ", "").strip()
+                        to_name   = deficits[i][0].replace("معرض ", "").replace("فرع ", "").strip()
+                        transfer_recs.append(f"من {from_name} إلى {to_name}")
+    
+            transfer_note = " | ".join(transfer_recs) if transfer_recs else "─"
+    
+            row["حالة الصنف"] = item_status
+            row["الطلب المقترح (60 يوم)"] = suggested_60d_qty
+            if column_options.get('showrooms', True):
+                row["توصيات المناقلة"] = transfer_note
+    
         export_rows.append(row)
 
     notify(82, f"تم بناء {len(export_rows):,} سجل. جاري توليد ملف Excel...")
