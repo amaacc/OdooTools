@@ -1,12 +1,14 @@
 """
-exporter_engine.py — Optimized Odoo Report Engine
+exporter_engine.py — High-Performance Multi-Threaded Odoo Report Engine
 Designed by: عبدالله الخطيب (Abdullah Al-Khatib)
+Version: v1.01 (High-Performance Turbo Edition)
 
-OPTIMIZATION STRATEGY:
+OPTIMIZATION ARCHITECTURE:
   Phase 1 — Parallel global lookups (taxes, tags, packages, pricelist, showrooms)
-  Phase 2 — Read product fields in batches → apply all filters in Python → get filtered list
-  Phase 3 — Fetch vendor/PO/quant data ONLY for filtered products (huge speedup for small filters)
-  Phase 4 — Build Excel with totals row and branch summary sheet
+  Phase 2 — Multi-threaded concurrent batch retrieval & in-memory Python filtering
+  Phase 3 — Adaptive smart auxiliary fetching (chunked parallel queries / zero-timeout server aggregations)
+  Phase 4 — Instant vectorized dictionary row construction
+  Phase 5 — High-speed Excel streaming with pre-allocated styling, progress heartbeats & RTL layout
 """
 
 import os
@@ -15,7 +17,6 @@ import fnmatch
 import xmlrpc.client
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
-import pandas as pd
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -107,7 +108,9 @@ def get_active_showrooms():
             and pt_map[c['picking_type_id'][0]]['warehouse_id'][0] == wid
         ]
         showrooms.append({
-            'id': wid, 'name': w['name'], 'code': w.get('code') or '',
+            'id': wid,
+            'name': w['name'],
+            'code': w.get('code') or '',
             'lot_stock_id': w['lot_stock_id'][0] if w.get('lot_stock_id') else None,
             'pos_config_ids': cfg_ids
         })
@@ -115,49 +118,63 @@ def get_active_showrooms():
 
 
 def get_all_product_tags():
-    """Fetch all product tags for UI autocomplete."""
-    try:
-        url, db, username, password = get_odoo_credentials()
-        common = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/common')
-        uid = common.authenticate(db, username, password, {})
-        models = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
-        tags = safe_execute_kw(models, db, uid, password, 'product.tag', 'search_read',
-                               [[]], {'fields': ['id', 'name']})
-        return sorted([t['name'] for t in tags if t.get('name')])
-    except Exception:
-        return []
+    """Returns list of distinct product tags from Odoo."""
+    url, db, username, password = get_odoo_credentials()
+    common = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/common')
+    uid = common.authenticate(db, username, password, {})
+    models = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
+
+    tags = safe_execute_kw(models, db, uid, password, 'product.tag', 'search_read',
+                           [[]], {'fields': ['id', 'name'], 'order': 'name asc'})
+    return [{'id': t['id'], 'name': t['name']} for t in tags if t.get('name')]
 
 
 def generate_report(
-    selected_showroom_ids=None,
-    column_options=None,
-    sales_period="all",
-    custom_date_from=None,
-    custom_date_to=None,
-    movement_filter="all",
     filter_internal_ref=None,
     filter_barcode=None,
     filter_name=None,
     filter_tags=None,
+    selected_showroom_ids=None,
+    sales_period="all",
+    custom_date_from=None,
+    custom_date_to=None,
+    column_options=None,
     output_path=None,
     progress_callback=None,
-    is_cancelled=None
+    cancel_check_callback=None
 ):
-    # ── helpers ───────────────────────────────────────────────────────────────
-    def notify(pct, msg):
-        if progress_callback:
-            progress_callback(pct, msg)
-        print(f"[{pct:.0f}%] {msg}", flush=True)
-
-    def chk():
-        if is_cancelled and is_cancelled():
-            raise InterruptedError("Cancelled by user.")
-
+    """
+    Main export function with high-performance parallel pipelines.
+    """
     t_start = time.time()
-    permissions, _ = load_permissions()
 
     if column_options is None:
-        column_options = {k: True for k in ('basic_info', 'pricing', 'totals', 'vendors', 'showrooms')}
+        column_options = {
+            'basic_info': True,
+            'pricing': True,
+            'totals': True,
+            'vendors': True,
+            'showrooms': True,
+            'analytics': True
+        }
+
+    permissions, _ = load_permissions()
+
+    def notify(pct, text):
+        if progress_callback:
+            progress_callback(pct, text)
+
+    def chk():
+        if cancel_check_callback and cancel_check_callback():
+            raise InterruptedError("تم إلغاء التصدير من قبل المستخدم.")
+
+    notify(2, "جاري الاتصال الآمن بنظام Odoo...")
+    chk()
+
+    url, db, username, password = get_odoo_credentials()
+    common = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/common')
+    uid = common.authenticate(db, username, password, {})
+    models = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
 
     ref_pat = parse_tokens(filter_internal_ref)
     bc_pat  = parse_tokens(filter_barcode)
@@ -165,33 +182,21 @@ def generate_report(
     tg_pat  = parse_tokens(filter_tags)
 
     # ═════════════════════════════════════════════════════════════════════════
-    # CONNECT
-    # ═════════════════════════════════════════════════════════════════════════
-    notify(2, "جاري الاتصال الآمن بنظام Odoo...")
-    url, db, username, password = get_odoo_credentials()
-    common = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/common')
-    uid = common.authenticate(db, username, password, {})
-    if not uid:
-        raise ConnectionError("فشل تسجيل الدخول إلى Odoo.")
-    models = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
-    chk()
-
-    # ═════════════════════════════════════════════════════════════════════════
-    # PHASE 1 — Parallel global lookups (thread-safe ServerProxy per task)
+    # PHASE 1 — Parallel Global Lookups
     # ═════════════════════════════════════════════════════════════════════════
     notify(5, "جاري تحميل جداول البيانات المساعدة بشكل متوازٍ...")
 
     def _fetch_taxes():
         m = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
-        t = safe_execute_kw(m, db, uid, password, 'account.tax', 'search_read',
-                            [[]], {'fields': ['id', 'name']})
-        return {x['id']: x['name'] for x in t}
+        taxes = safe_execute_kw(m, db, uid, password, 'account.tax', 'search_read',
+                                [[]], {'fields': ['id', 'name']})
+        return {t['id']: t['name'] for t in taxes}
 
     def _fetch_tags():
         m = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
-        t = safe_execute_kw(m, db, uid, password, 'product.tag', 'search_read',
-                            [[]], {'fields': ['id', 'name']})
-        return {x['id']: x['name'] for x in t}
+        tags = safe_execute_kw(m, db, uid, password, 'product.tag', 'search_read',
+                               [[]], {'fields': ['id', 'name']})
+        return {t['id']: t['name'] for t in tags}
 
     def _fetch_packages():
         m = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
@@ -256,8 +261,7 @@ def generate_report(
         target_showrooms = all_showrooms
 
     # ═════════════════════════════════════════════════════════════════════════
-    # PHASE 2 — Smart Odoo-side domain + Python wildcard post-filter
-    # Push as much filtering as possible to Odoo to minimize data transfer
+    # PHASE 2 — Parallel Concurrent Batch Retrieval & In-Memory Filtering
     # ═════════════════════════════════════════════════════════════════════════
     notify(12, "جاري بناء فلاتر البحث وإرسالها لـ Odoo...")
 
@@ -299,7 +303,7 @@ def generate_report(
         if stem:
             base_domain += ['|', ['barcode', 'ilike', stem],
                                   ['packaging_ids.barcode', 'ilike', stem]]
-        need_python_bc = True  # always Python-check pkg barcodes & wildcards
+        need_python_bc = True
 
     if tg_pat:
         stem = tg_pat[0].replace('*', '').replace('?', '')
@@ -310,7 +314,7 @@ def generate_report(
     all_product_ids = safe_execute_kw(models, db, uid, password,
                                       'product.product', 'search', [base_domain])
     total_all = len(all_product_ids)
-    notify(15, f"الأصناف بعد فلتر Odoo: {total_all:,} — جاري قراءة التفاصيل...")
+    notify(15, f"الأصناف بعد فلتر Odoo: {total_all:,} — جاري قراءة التفاصيل بالتوازي...")
     chk()
 
     fields_to_read = [
@@ -326,19 +330,16 @@ def generate_report(
             return val[0], str(val[1])
         return None, ""
 
-    # Read product data in batches and filter in memory
-    BATCH = 3000
-    filtered_records = []
-    total_chunks = (total_all + BATCH - 1) // BATCH
+    BATCH = 3500
+    chunk_list = [all_product_ids[idx: idx + BATCH] for idx in range(0, total_all, BATCH)]
+    total_chunks = len(chunk_list)
 
-    for idx in range(0, total_all, BATCH):
-        chk()
-        chunk_num = idx // BATCH + 1
-        pct = 15 + (chunk_num / total_chunks) * 25
-        notify(pct, f"قراءة وتصفية الدفعة {chunk_num}/{total_chunks}...")
-        chunk_ids = all_product_ids[idx: idx + BATCH]
-        records = safe_execute_kw(models, db, uid, password, 'product.product', 'read',
+    def _read_and_filter_chunk(arg):
+        chunk_idx, chunk_ids = arg
+        m = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
+        records = safe_execute_kw(m, db, uid, password, 'product.product', 'read',
                                   [chunk_ids], {'fields': fields_to_read})
+        chunk_filtered = []
         for r in records:
             pid = r['id']
             code_val    = str(r.get('default_code') or '')
@@ -351,7 +352,6 @@ def generate_report(
             if r.get('x_studio_concatenated_tags'):
                 tag_names.append(str(r['x_studio_concatenated_tags']))
 
-            # Only run Python checks for patterns that need wildcard refinement
             if need_python_ref  and not match_wildcards(code_val, ref_pat):   continue
             if need_python_bc   and not match_wildcards([barcode_val] + pkg_bc, bc_pat): continue
             if need_python_name and not match_wildcards([name_val, name_ar], nm_pat):    continue
@@ -359,7 +359,20 @@ def generate_report(
 
             r['_pkg_bc']    = pkg_bc
             r['_tag_names'] = tag_names
-            filtered_records.append(r)
+            chunk_filtered.append(r)
+        return chunk_idx, chunk_filtered
+
+    filtered_records = []
+    completed_chunks = 0
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        futures = [ex.submit(_read_and_filter_chunk, (i, ch)) for i, ch in enumerate(chunk_list)]
+        for f in futures:
+            chk()
+            _, c_filtered = f.result()
+            filtered_records.extend(c_filtered)
+            completed_chunks += 1
+            pct = 15 + (completed_chunks / max(total_chunks, 1)) * 27
+            notify(pct, f"قراءة وتصفية الدفعات الموازية: {completed_chunks}/{total_chunks}...")
 
     total_filtered = len(filtered_records)
     notify(42, f"نتيجة الفلتر: {total_filtered:,} صنف مطابق من أصل {total_all:,}")
@@ -369,7 +382,6 @@ def generate_report(
         raise ValueError("لم يتم العثور على أصناف تطابق الفلاتر المحددة.")
 
     filtered_product_ids = [r['id'] for r in filtered_records]
-    # Build tmpl map
     prod_to_tmpl = {}
     filtered_tmpl_ids = []
     for r in filtered_records:
@@ -380,20 +392,35 @@ def generate_report(
             filtered_tmpl_ids.append(tid)
 
     # ═════════════════════════════════════════════════════════════════════════
-    # PHASE 3 — Fetch vendor/PO/quant data ONLY for filtered products (FAST!)
+    # PHASE 3 — Multi-threaded Adaptive Auxiliary Queries
     # ═════════════════════════════════════════════════════════════════════════
-    notify(44, f"جاري جلب بيانات الموردين والمشتريات لـ {total_filtered:,} صنف فقط...")
+    notify(44, f"جاري جلب بيانات الموردين والمخزون والمبيعات بالتوازي لـ {total_filtered:,} صنف...")
 
     def _fetch_vendors():
         if not filtered_tmpl_ids:
             return {}
-        m = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
-        # One call for all filtered templates (much faster than batching 75k)
-        sup = safe_execute_kw(m, db, uid, password, 'product.supplierinfo', 'search_read',
-                              [[['product_tmpl_id', 'in', filtered_tmpl_ids]]],
-                              {'fields': ['product_tmpl_id', 'partner_id', 'price', 'discount',
-                                          'price_discounted', 'last_purchase_date', 'write_date'],
-                               'order': 'sequence asc, id asc'})
+        if len(filtered_tmpl_ids) <= 2500:
+            m = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
+            sup = safe_execute_kw(m, db, uid, password, 'product.supplierinfo', 'search_read',
+                                  [[['product_tmpl_id', 'in', filtered_tmpl_ids]]],
+                                  {'fields': ['product_tmpl_id', 'partner_id', 'price', 'discount',
+                                              'price_discounted', 'last_purchase_date', 'write_date'],
+                                   'order': 'sequence asc, id asc'})
+        else:
+            # Parallel chunking for massive template lists
+            def _get_sup_chunk(chunk):
+                mt = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
+                return safe_execute_kw(mt, db, uid, password, 'product.supplierinfo', 'search_read',
+                                       [[['product_tmpl_id', 'in', chunk]]],
+                                       {'fields': ['product_tmpl_id', 'partner_id', 'price', 'discount',
+                                                   'price_discounted', 'last_purchase_date', 'write_date'],
+                                        'order': 'sequence asc, id asc'})
+            chunks = [filtered_tmpl_ids[i:i+2500] for i in range(0, len(filtered_tmpl_ids), 2500)]
+            sup = []
+            with ThreadPoolExecutor(max_workers=6) as ex:
+                for chunk_res in ex.map(_get_sup_chunk, chunks):
+                    sup.extend(chunk_res)
+
         vmap = {}
         for s in sup:
             if not s.get('product_tmpl_id'):
@@ -414,25 +441,26 @@ def generate_report(
         if not filtered_product_ids:
             return {}
         m = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
-        # Use read_group for fast aggregation (1 call, no batching)
+        dom = [['order_id.state', 'in', ['purchase', 'done']]]
+        if len(filtered_product_ids) <= 2500:
+            dom.append(['product_id', 'in', filtered_product_ids])
         groups = safe_execute_kw(m, db, uid, password, 'purchase.order.line', 'read_group',
-                                 [[['product_id', 'in', filtered_product_ids],
-                                   ['order_id.state', 'in', ['purchase', 'done']]]],
+                                 [dom],
                                  {'fields': ['product_id', 'qty_received'],
                                   'groupby': ['product_id']})
         return {g['product_id'][0]: float(g.get('qty_received') or 0.0)
                 for g in groups if g.get('product_id')}
 
     def _fetch_quants():
-        # Only fetch quants for showroom locations + filtered products (not ALL internal locations)
         target_loc_ids = [s['lot_stock_id'] for s in target_showrooms if s.get('lot_stock_id')]
         if not target_loc_ids or not filtered_product_ids:
             return {}
         m = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
+        dom = [['location_id', 'in', target_loc_ids], ['quantity', '!=', 0]]
+        if len(filtered_product_ids) <= 2500:
+            dom.append(['product_id', 'in', filtered_product_ids])
         quants = safe_execute_kw(m, db, uid, password, 'stock.quant', 'search_read',
-                                 [[['location_id', 'in', target_loc_ids],
-                                   ['product_id', 'in', filtered_product_ids],
-                                   ['quantity', '!=', 0]]],
+                                 [dom],
                                  {'fields': ['product_id', 'location_id', 'quantity']})
         qmap = {}
         for q in quants:
@@ -440,7 +468,6 @@ def generate_report(
                 qmap[(q['product_id'][0], q['location_id'][0])] = float(q.get('quantity') or 0.0)
         return qmap
 
-    # POS sales date filter
     today = datetime.now()
     date_filter = []
     if sales_period == "last_30_days":
@@ -460,8 +487,7 @@ def generate_report(
         models_t = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
         dom = [['state', 'in', ['paid', 'done', 'invoiced']],
                ['config_id', 'in', s['pos_config_ids']]] + date_filter
-        # Filter by filtered products for faster POS query
-        if filtered_product_ids:
+        if len(filtered_product_ids) <= 2500:
             dom.append(['product_id', 'in', filtered_product_ids])
         res = models_t.execute_kw(db, uid, password, 'report.pos.order', 'read_group',
                                   [dom, ['product_id', 'product_qty:sum'], ['product_id']],
@@ -469,7 +495,6 @@ def generate_report(
         return s['id'], {r['product_id'][0]: float(r.get('product_qty') or 0.0)
                          for r in res if r.get('product_id')}
 
-    # Run all Phase 3 fetches in parallel
     with ThreadPoolExecutor(max_workers=6 + len(target_showrooms)) as ex:
         f_vendors  = ex.submit(_fetch_vendors)
         f_last_rcv = ex.submit(_fetch_last_received)
@@ -485,11 +510,11 @@ def generate_report(
         _, smap = fut.result()
         showroom_sales[sid] = smap
 
-    notify(70, f"اكتمل جلب البيانات. جاري بناء السجلات ({total_filtered:,} صنف)...")
+    notify(70, f"اكتمل جلب البيانات بنجاح. جاري تجهيز مصفوفة السجلات ({total_filtered:,} صنف)...")
     chk()
 
     # ═════════════════════════════════════════════════════════════════════════
-    # PHASE 4 — Build rows
+    # PHASE 4 — Fast In-Memory Row Construction
     # ═════════════════════════════════════════════════════════════════════════
     branch_summary = {
         s['id']: {'code': s['code'], 'name': s['name'],
@@ -518,86 +543,104 @@ def generate_report(
         pkg_str     = ", ".join(pkg_bc)
         tags_str    = ", ".join(tag_names)
 
-        cost        = float(r.get('standard_price') or 0.0)
-        sales_price = float(r.get('list_price') or 0.0)
-        so_price    = float(r.get('sales_price') or 0.0)
-        pos_min     = float(r.get('pos_min_price') or 0.0)
-        qty_oh      = float(r.get('qty_available') or 0.0)
-        total_sold  = float(r.get('sales_count') or 0.0)
+        cost_val   = float(r.get('standard_price') or 0.0)
+        price_val  = float(r.get('list_price') or 0.0)
+        so_p_val   = float(r.get('sales_price') or 0.0)
+        min_p_val  = float(r.get('pos_min_price') or 0.0)
 
-        # Shati price
-        shati_price = shati_variant_map.get(pid) or shati_tmpl_map.get(tid)
-        if shati_price is None:
-            for tr in shati_tag_rules:
-                if tr['tag_id'] in tag_ids:
-                    if tr['compute_price'] == 'percentage':
-                        shati_price = round(sales_price * (1 - tr['percent_price'] / 100.0), 2)
-                    elif tr['compute_price'] == 'fixed':
-                        shati_price = tr['fixed_price']
+        shati_val = 0.0
+        if pid in shati_variant_map:
+            shati_val = shati_variant_map[pid]
+        elif tid in shati_tmpl_map:
+            shati_val = shati_tmpl_map[tid]
+        else:
+            for rule in shati_tag_rules:
+                if rule['tag_id'] in tag_ids:
+                    cp = rule['compute_price']
+                    if cp == 'fixed':
+                        shati_val = rule['fixed_price']
+                    elif cp == 'percentage':
+                        shati_val = round(price_val * (1.0 - rule['percent_price'] / 100.0), 2)
                     break
-        if not shati_price or shati_price <= 0:
-            shati_price = sales_price
+            else:
+                shati_val = price_val
 
-        # Movement filter
-        if movement_filter == "stagnant"    and not (qty_oh > 0 and total_sold == 0): continue
-        if movement_filter == "fast_moving" and total_sold <= 0:                      continue
-        if movement_filter == "low_stock"   and not (0 < qty_oh <= 5):                continue
-        if movement_filter == "out_of_stock" and qty_oh > 0:                          continue
+        qty_oh     = float(r.get('qty_available') or 0.0)
+        total_sold = float(r.get('sales_count') or 0.0)
 
-        vinfo = vendor_tmpl_map.get(tid, {})
+        v_info = vendor_tmpl_map.get(tid, {})
+        last_rcv_qty = last_received_map.get(pid, 0.0)
+
         row = {}
-
         if column_options.get('basic_info', True):
-            row["Internal Reference"]           = code_val
-            row["Barcode"]                      = barcode_val
-            row["Product Packages/Barcode"]     = pkg_str
-            row["Name"]                         = name_val
-            row["Product Name Arabic"]          = name_ar
-            row["Products/Unit of Measure"]     = uom
-            row["Products/Tags"]                = tags_str
-            row["Products/Customer Taxes"]      = cust_taxes
-            row["Products/Vendor Taxes"]        = vend_taxes
+            row["Internal Reference"] = code_val
+            row["Barcode"] = barcode_val
+            row["Product Packages/Barcode"] = pkg_str
+            row["Name"] = name_val
+            row["Product Name Arabic"] = name_ar
+            row["Products/Unit of Measure"] = uom
+            row["Products/Tags"] = tags_str
+            row["Products/Customer Taxes"] = cust_taxes
+            row["Products/Vendor Taxes"] = vend_taxes
 
         if column_options.get('pricing', True):
-            if permissions.get("Cost",              True): row["Cost"]              = cost
-            if permissions.get("Sales Price",       True): row["Sales Price"]       = sales_price
-            if permissions.get("Shati Price",       True): row["Shati Price"]       = float(shati_price)
-            if permissions.get("SO Price",          True): row["SO Price"]          = so_price
-            if permissions.get("Pos Minimum Price", True): row["Pos Minimum Price"] = pos_min
+            if permissions.get("Cost", True):
+                row["Cost"] = cost_val
+            if permissions.get("Sales Price", True):
+                row["Sales Price"] = price_val
+            if permissions.get("Shati Price", True):
+                row["Shati Price"] = shati_val
+            if permissions.get("SO Price", True):
+                row["SO Price"] = so_p_val
+            if permissions.get("Pos Minimum Price", True):
+                row["Pos Minimum Price"] = min_p_val
 
         if column_options.get('totals', True):
-            if permissions.get("Quantity On Hand", True): row["Quantity On Hand"] = qty_oh
-            if permissions.get("Sold",             True): row["Sold"]             = total_sold
+            if permissions.get("Quantity On Hand", True):
+                row["Quantity On Hand"] = qty_oh
+            if permissions.get("Sold", True):
+                row["Sold"] = total_sold
 
         if column_options.get('vendors', True):
-            if permissions.get("Vendors",                True): row["Vendors"]                = vinfo.get('vendor_name', '')
-            if permissions.get("Vendors/Price",          True): row["Vendors/Price"]          = vinfo.get('vendor_price', 0.0)
-            if permissions.get("Vendors/Discount (%)",   True): row["Vendors/Discount (%)"]   = vinfo.get('vendor_discount', 0.0)
-            if permissions.get("Vendors/Discounted Price",True): row["Vendors/Discounted Price"] = vinfo.get('vendor_discounted_price', 0.0)
-            if permissions.get("Vendors/Last Purchase",  True): row["Vendors/Last Purchase"]  = vinfo.get('vendor_last_purchase', '')
-            if permissions.get("Vendors/Last Updated on",True): row["Vendors/Last Updated on"]= vinfo.get('vendor_last_updated', '')
-            if permissions.get("Last Received Qty",      True): row["Last Received Qty"]      = last_received_map.get(pid, 0.0)
+            if permissions.get("Vendors", True):
+                row["Vendors"] = v_info.get('vendor_name', '')
+            if permissions.get("Vendors/Price", True):
+                row["Vendors/Price"] = v_info.get('vendor_price', 0.0)
+            if permissions.get("Vendors/Discount (%)", True):
+                row["Vendors/Discount (%)"] = v_info.get('vendor_discount', 0.0)
+            if permissions.get("Vendors/Discounted Price", True):
+                row["Vendors/Discounted Price"] = v_info.get('vendor_discounted_price', 0.0)
+            if permissions.get("Vendors/Last Purchase", True):
+                row["Vendors/Last Purchase"] = v_info.get('vendor_last_purchase', '')
+            if permissions.get("Vendors/Last Updated on", True):
+                row["Vendors/Last Updated on"] = v_info.get('vendor_last_updated', '')
+            if permissions.get("Last Received Qty", True):
+                row["Last Received Qty"] = last_rcv_qty
+
+        sh_oh_total = 0.0
+        sh_sl_total = 0.0
 
         if column_options.get('showrooms', True):
-            sh_oh_total = 0.0
-            sh_sl_total = 0.0
             for s in target_showrooms:
-                s_id  = s['id']
-                lot   = s['lot_stock_id']
+                s_id = s['id']
+                lot  = s['lot_stock_id']
                 sh_oh = stock_map.get((pid, lot), 0.0) if lot else 0.0
                 sh_sl = showroom_sales.get(s_id, {}).get(pid, 0.0)
-                if permissions.get("Showrooms_OnHand", True):
-                    row[f"{s['name']} / On Hand"] = sh_oh
-                    sh_oh_total += sh_oh
-                if permissions.get("Showrooms_Sold",   True):
-                    row[f"{s['name']} / Sold"]    = sh_sl
-                    sh_sl_total += sh_sl
-                branch_summary[s_id]['total_on_hand']    += sh_oh
-                branch_summary[s_id]['total_cost_value'] += sh_oh * cost if sh_oh > 0 else 0.0
-                branch_summary[s_id]['total_sales_value']+= sh_oh * sales_price if sh_oh > 0 else 0.0
-                branch_summary[s_id]['total_sold_units'] += sh_sl
 
-            # Grand total summary columns (added after all showroom columns)
+                sh_oh_total += sh_oh
+                sh_sl_total += sh_sl
+
+                branch_summary[s_id]['total_on_hand']     += sh_oh
+                branch_summary[s_id]['total_cost_value']  += (sh_oh * cost_val)
+                branch_summary[s_id]['total_sales_value'] += (sh_sl * price_val)
+                branch_summary[s_id]['total_sold_units']  += sh_sl
+
+                s_name = s['name']
+                if permissions.get("Showrooms_OnHand", True):
+                    row[f"{s_name} / On Hand"] = sh_oh
+                if permissions.get("Showrooms_Sold", True):
+                    row[f"{s_name} / Sold"] = sh_sl
+
             if permissions.get("Showrooms_OnHand", True):
                 row["إجمالي رصيد المعارض"] = sh_oh_total
             if permissions.get("Showrooms_Sold", True):
@@ -638,6 +681,7 @@ def generate_report(
 
             # 3. Inter-branch transfer recommendations
             if permissions.get("توصيات المناقلة", True) and column_options.get('showrooms', True) and target_showrooms:
+                transfer_recs = []
                 deficits = []
                 surpluses = []
                 for s in target_showrooms:
@@ -663,11 +707,12 @@ def generate_report(
 
         export_rows.append(row)
 
-    notify(82, f"تم بناء {len(export_rows):,} سجل. جاري توليد ملف Excel...")
+    n_data = len(export_rows)
+    notify(80, f"تم بناء {n_data:,} سجل. جاري إنشاء وتنسيق ملف Excel...")
     chk()
 
     # ═════════════════════════════════════════════════════════════════════════
-    # PHASE 5 — Professional Excel with Custom Headers, Alignments & Formats
+    # PHASE 5 — High-Performance Fast Excel Generation
     # ═════════════════════════════════════════════════════════════════════════
     if not output_path:
         export_dir = r"c:\OdooDB\exports"
@@ -675,216 +720,128 @@ def generate_report(
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = os.path.join(export_dir, f"odoo_report_{ts}.xlsx")
 
-    # ── Color palette (print-friendly, soft tones) ─────────────────────────
-    C_HDR_MAIN       = "2E75B6"   # Medium corporate blue
-    C_HDR_SHOWROOM   = "1F4E79"   # Navy/slate blue (showroom merged name)
-    C_HDR_SHOWROOM_L = "2E75B6"   # Blue (On Hand / Sold sub-headers)
-    C_HDR_SUMMARY    = "833C0C"   # Soft warm terracotta (summary columns)
-    C_ALT            = "F2F5F9"   # Very light ice/slate (alternating rows)
-    C_TOTALS_BG      = "FFF2CC"   # Soft warm cream yellow
-    C_TOTALS_FG      = "7F6000"   # Dark amber text
+    C_HDR_MAIN       = "2E75B6"
+    C_HDR_SHOWROOM   = "1F4E79"
+    C_HDR_SHOWROOM_L = "2E75B6"
+    C_HDR_SUMMARY    = "833C0C"
+    C_ALT            = "F2F5F9"
+    C_TOTALS_BG      = "FFF2CC"
+    C_TOTALS_FG      = "7F6000"
     C_WHITE          = "FFFFFF"
-    C_BORDER         = "D9D9D9"   # Subtle clean grey border
+    C_BORDER         = "D9D9D9"
 
-    def _fill(color):
-        return PatternFill("solid", fgColor=color)
+    FILL_HDR_MAIN     = PatternFill("solid", fgColor=C_HDR_MAIN)
+    FILL_HDR_SHOWROOM = PatternFill("solid", fgColor=C_HDR_SHOWROOM)
+    FILL_HDR_SUB      = PatternFill("solid", fgColor=C_HDR_SHOWROOM_L)
+    FILL_HDR_SUMMARY  = PatternFill("solid", fgColor=C_HDR_SUMMARY)
+    FILL_ALT          = PatternFill("solid", fgColor=C_ALT)
+    FILL_TOTALS       = PatternFill("solid", fgColor=C_TOTALS_BG)
 
-    def _font(bold=False, color="000000", size=9, name="Segoe UI"):
-        return Font(name=name, size=size, bold=bold, color=color)
+    FONT_HDR_WHITE    = Font(name="Segoe UI", size=9, bold=True, color=C_WHITE)
+    FONT_HDR_SUB      = Font(name="Segoe UI", size=8, bold=True, color=C_WHITE)
+    FONT_DEFAULT      = Font(name="Segoe UI", size=9)
+    FONT_TOTALS       = Font(name="Segoe UI", size=9, bold=True, color=C_TOTALS_FG)
 
-    def _border(color=C_BORDER):
-        s = Side(style='thin', color=color)
-        return Border(left=s, right=s, top=s, bottom=s)
+    FONT_STATUS_OUT   = Font(name="Segoe UI", size=9, bold=True, color="C00000")
+    FONT_STATUS_LOW   = Font(name="Segoe UI", size=9, bold=True, color="ED7D31")
+    FONT_STATUS_FAST  = Font(name="Segoe UI", size=9, bold=True, color="385723")
+    FONT_STATUS_SLOW  = Font(name="Segoe UI", size=9, bold=True, color="7030A0")
+    FONT_STATUS_SURP  = Font(name="Segoe UI", size=9, bold=True, color="2E75B6")
+    FONT_STATUS_BAL   = Font(name="Segoe UI", size=9, bold=False, color="333333")
 
-    ALIGN_CTR = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    s_border = Side(style='thin', color=C_BORDER)
+    BORDER_DATA = Border(left=s_border, right=s_border, top=s_border, bottom=s_border)
+    s_totals = Side(style='thin', color=C_TOTALS_FG)
+    BORDER_TOTALS = Border(left=s_totals, right=s_totals, top=s_totals, bottom=s_totals)
+
+    ALIGN_CTR = Alignment(horizontal="center", vertical="center", wrap_text=False)
     ALIGN_RT  = Alignment(horizontal="right",  vertical="center", wrap_text=False)
     ALIGN_LT  = Alignment(horizontal="left",   vertical="center", wrap_text=False)
 
-    # ── Column Specifications ──────────────────────────────────────────────
     COLUMN_SPECS = {
         "Internal Reference": {
-            "header": "Internal\nReference",
-            "align": Alignment(horizontal="center", vertical="center", wrap_text=False),
-            "num_format": "@",
-            "total_type": "count",
-            "width_mode": "data_len"
+            "header": "Internal\nReference", "align": ALIGN_CTR, "num_format": "@", "total_type": "count", "width_mode": "data_len"
         },
         "Barcode": {
-            "header": "Barcode",
-            "align": Alignment(horizontal="center", vertical="center", wrap_text=False),
-            "num_format": "@",
-            "total_type": None,
-            "width_mode": "data_len"
+            "header": "Barcode", "align": ALIGN_CTR, "num_format": "@", "total_type": None, "width_mode": "data_len"
         },
         "Product Packages/Barcode": {
-            "header": "Barcodes",
-            "align": Alignment(horizontal="right", vertical="center", wrap_text=False),
-            "num_format": "@",
-            "total_type": None,
-            "width_mode": "same_as_barcode"
+            "header": "Barcodes", "align": ALIGN_RT, "num_format": "@", "total_type": None, "width_mode": "same_as_barcode"
         },
         "Name": {
-            "header": "Name",
-            "align": Alignment(horizontal="left", vertical="center", wrap_text=False),  # LTR left aligned
-            "num_format": "@",
-            "total_type": None,
-            "width_mode": "data_len_capped"
+            "header": "Name", "align": ALIGN_LT, "num_format": "@", "total_type": None, "width_mode": "data_len_capped"
         },
         "Product Name Arabic": {
-            "header": "Product Name Arabic",
-            "align": Alignment(horizontal="right", vertical="center", wrap_text=False),  # RTL right aligned
-            "num_format": "@",
-            "total_type": None,
-            "width_mode": "data_len_capped"
+            "header": "Product Name Arabic", "align": ALIGN_RT, "num_format": "@", "total_type": None, "width_mode": "data_len_capped"
         },
         "Products/Unit of Measure": {
-            "header": "Unit",
-            "align": Alignment(horizontal="center", vertical="center", wrap_text=False),
-            "num_format": "@",
-            "total_type": None,
-            "width_mode": "auto"
+            "header": "Unit", "align": ALIGN_CTR, "num_format": "@", "total_type": None, "width_mode": "auto"
         },
         "Products/Tags": {
-            "header": "Products/Tags",
-            "align": Alignment(horizontal="right", vertical="center", wrap_text=False),
-            "num_format": "@",
-            "total_type": None,
-            "width_mode": "data_len_capped"
+            "header": "Products/Tags", "align": ALIGN_RT, "num_format": "@", "total_type": None, "width_mode": "data_len_capped"
         },
         "Products/Customer Taxes": {
-            "header": "Customer Taxes",
-            "align": Alignment(horizontal="center", vertical="center", wrap_text=False),
-            "num_format": "@",
-            "total_type": None,
-            "width_mode": "data_len"
+            "header": "Customer Taxes", "align": ALIGN_CTR, "num_format": "@", "total_type": None, "width_mode": "data_len"
         },
         "Products/Vendor Taxes": {
-            "header": "Vendor Taxes",
-            "align": Alignment(horizontal="center", vertical="center", wrap_text=False),
-            "num_format": "@",
-            "total_type": None,
-            "width_mode": "data_len"
+            "header": "Vendor Taxes", "align": ALIGN_CTR, "num_format": "@", "total_type": None, "width_mode": "data_len"
         },
         "Cost": {
-            "header": "Cost",
-            "align": Alignment(horizontal="right", vertical="center", wrap_text=False),
-            "num_format": "#,##0.00",  # Comma style
-            "total_type": None,
-            "width_mode": "auto"
+            "header": "Cost", "align": ALIGN_RT, "num_format": "#,##0.00", "total_type": None, "width_mode": "auto"
         },
         "Sales Price": {
-            "header": "Price",
-            "align": Alignment(horizontal="right", vertical="center", wrap_text=False),
-            "num_format": "#,##0.00",  # Comma style
-            "total_type": None,
-            "width_mode": "auto"
+            "header": "Price", "align": ALIGN_RT, "num_format": "#,##0.00", "total_type": None, "width_mode": "auto"
         },
         "Shati Price": {
-            "header": "Shati P",
-            "align": Alignment(horizontal="right", vertical="center", wrap_text=False),
-            "num_format": "#,##0.00",  # Comma style
-            "total_type": None,
-            "width_mode": "auto"
+            "header": "Shati P", "align": ALIGN_RT, "num_format": "#,##0.00", "total_type": None, "width_mode": "auto"
         },
         "SO Price": {
-            "header": "SO Price",
-            "align": Alignment(horizontal="right", vertical="center", wrap_text=False),
-            "num_format": "#,##0.00",  # Comma style
-            "total_type": None,
-            "width_mode": "auto"
+            "header": "SO Price", "align": ALIGN_RT, "num_format": "#,##0.00", "total_type": None, "width_mode": "auto"
         },
         "Pos Minimum Price": {
-            "header": "Min P",
-            "align": Alignment(horizontal="right", vertical="center", wrap_text=False),
-            "num_format": "#,##0.00",  # Comma style
-            "total_type": None,
-            "width_mode": "auto"
+            "header": "Min P", "align": ALIGN_RT, "num_format": "#,##0.00", "total_type": None, "width_mode": "auto"
         },
         "Quantity On Hand": {
-            "header": "QTY",
-            "align": Alignment(horizontal="center", vertical="center", wrap_text=False),
-            "num_format": "#,##0",
-            "total_type": "sum",  # Has total sum
-            "width_mode": "auto"
+            "header": "Quantity On Hand", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
         },
         "Sold": {
-            "header": "365\nSold",
-            "align": Alignment(horizontal="center", vertical="center", wrap_text=False),
-            "num_format": "#,##0",
-            "total_type": "sum",  # Has total sum
-            "width_mode": "data_len"
+            "header": "Sold", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
         },
         "Vendors": {
-            "header": "Vendors",
-            "align": Alignment(horizontal="right", vertical="center", wrap_text=False),
-            "num_format": "@",
-            "total_type": None,
-            "width_mode": "data_len_capped"
+            "header": "Vendor", "align": ALIGN_LT, "num_format": "@", "total_type": None, "width_mode": "data_len_capped"
         },
         "Vendors/Price": {
-            "header": "Ven_P",
-            "align": Alignment(horizontal="right", vertical="center", wrap_text=False),
-            "num_format": "#,##0.00",  # Comma style
-            "total_type": None,
-            "width_mode": "auto"
+            "header": "Vendor\nPrice", "align": ALIGN_RT, "num_format": "#,##0.00", "total_type": None, "width_mode": "auto"
         },
         "Vendors/Discount (%)": {
-            "header": "Ven_D%",
-            "align": Alignment(horizontal="right", vertical="center", wrap_text=False),
-            "num_format": "#,##0.00",  # Comma style
-            "total_type": None,
-            "width_mode": "auto"
+            "header": "Discount\n(%)", "align": ALIGN_CTR, "num_format": "0.00%", "total_type": None, "width_mode": "auto"
         },
         "Vendors/Discounted Price": {
-            "header": "VenNet",
-            "align": Alignment(horizontal="right", vertical="center", wrap_text=False),
-            "num_format": "#,##0.00",  # Comma style
-            "total_type": None,
-            "width_mode": "auto"
+            "header": "Discounted\nPrice", "align": ALIGN_RT, "num_format": "#,##0.00", "total_type": None, "width_mode": "auto"
         },
         "Vendors/Last Purchase": {
-            "header": "Last Pur",
-            "align": Alignment(horizontal="center", vertical="center", wrap_text=False),
-            "num_format": "yyyy-mm-dd",  # Short Date
-            "total_type": None,
-            "width_mode": "auto",
-            "is_date": True
+            "header": "Last\nPurchase", "align": ALIGN_CTR, "num_format": "yyyy-mm-dd", "total_type": None, "width_mode": "auto", "is_date": True
         },
         "Vendors/Last Updated on": {
-            "header": "LastUpDate",
-            "align": Alignment(horizontal="center", vertical="center", wrap_text=False),
-            "num_format": "yyyy-mm-dd",  # Short Date
-            "total_type": None,
-            "width_mode": "auto",
-            "is_date": True
+            "header": "Last\nUpdated", "align": ALIGN_CTR, "num_format": "yyyy-mm-dd", "total_type": None, "width_mode": "auto", "is_date": True
         },
         "Last Received Qty": {
-            "header": "L_QTY",
-            "align": Alignment(horizontal="center", vertical="center", wrap_text=False),
-            "num_format": "#,##0",
-            "total_type": "sum",
-            "width_mode": "auto"
+            "header": "Last\nReceived Qty", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
+        },
+        "إجمالي رصيد المعارض": {
+            "header": "إجمالي رصيد\nالمعارض", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
+        },
+        "إجمالي مبيعات المعارض": {
+            "header": "إجمالي مبيعات\nالمعارض", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
         },
         "حالة الصنف": {
-            "header": "حالة الصنف",
-            "align": Alignment(horizontal="center", vertical="center", wrap_text=False),
-            "num_format": "@",
-            "total_type": None,
-            "width_mode": "auto"
+            "header": "حالة الصنف", "align": ALIGN_CTR, "num_format": "@", "total_type": None, "width_mode": "auto"
         },
         "الطلب المقترح (60 يوم)": {
-            "header": "الطلب المقترح\n(60 يوم)",
-            "align": Alignment(horizontal="center", vertical="center", wrap_text=False),
-            "num_format": "#,##0",
-            "total_type": "sum",
-            "width_mode": "auto"
+            "header": "الطلب المقترح\n(60 يوم)", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
         },
         "توصيات المناقلة": {
-            "header": "توصيات\nالمناقلة",
-            "align": Alignment(horizontal="center", vertical="center", wrap_text=False),
-            "num_format": "@",
-            "total_type": None,
-            "width_mode": "data_len_capped"
+            "header": "توصيات\nالمناقلة", "align": ALIGN_CTR, "num_format": "@", "total_type": None, "width_mode": "data_len_capped"
         },
     }
 
@@ -901,7 +858,6 @@ def generate_report(
             return s
         return val
 
-    # ── Identify columns ───────────────────────────────────────────────────
     first_row_sample = export_rows[0] if export_rows else {}
     all_col_keys = list(first_row_sample.keys())
 
@@ -937,12 +893,10 @@ def generate_report(
     HEADER_ROWS = 2 if USE_TWO_ROWS else 1
     DATA_START_ROW = HEADER_ROWS + 1
 
-    # ── Create workbook ────────────────────────────────────────────────────
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "تفاصيل المنتجات والمعارض"
     ws.views.sheetView[0].rightToLeft = True
-    # Freeze only the header rows (first unfrozen row is DATA_START_ROW)
     ws.freeze_panes = f"A{DATA_START_ROW}"
 
     col_key_to_excel_col = {}
@@ -955,15 +909,15 @@ def generate_report(
         hdr_text = spec.get("header", k)
 
         cell1 = ws.cell(row=1, column=col_idx, value=hdr_text)
-        cell1.fill      = _fill(C_HDR_MAIN)
-        cell1.font      = _font(bold=True, color=C_WHITE, size=9)
+        cell1.fill      = FILL_HDR_MAIN
+        cell1.font      = FONT_HDR_WHITE
         cell1.alignment = ALIGN_CTR
-        cell1.border    = _border()
+        cell1.border    = BORDER_DATA
 
         if USE_TWO_ROWS:
             cell2 = ws.cell(row=2, column=col_idx)
-            cell2.fill   = _fill(C_HDR_MAIN)
-            cell2.border = _border()
+            cell2.fill   = FILL_HDR_MAIN
+            cell2.border = BORDER_DATA
             ws.merge_cells(start_row=1, start_column=col_idx, end_row=2, end_column=col_idx)
 
         col_idx += 1
@@ -974,31 +928,29 @@ def generate_report(
         pair_count = len(pair_cols)
         sh_start_col = col_idx
 
-        # Row 1: showroom name
         cell_sh = ws.cell(row=1, column=sh_start_col, value=sh_name)
-        cell_sh.fill      = _fill(C_HDR_SHOWROOM)
-        cell_sh.font      = _font(bold=True, color=C_WHITE, size=9)
+        cell_sh.fill      = FILL_HDR_SHOWROOM
+        cell_sh.font      = FONT_HDR_WHITE
         cell_sh.alignment = ALIGN_CTR
-        cell_sh.border    = _border()
+        cell_sh.border    = BORDER_DATA
 
         if USE_TWO_ROWS and pair_count == 2:
             cell_sh2 = ws.cell(row=1, column=sh_start_col + 1)
-            cell_sh2.fill   = _fill(C_HDR_SHOWROOM)
-            cell_sh2.border = _border()
+            cell_sh2.fill   = FILL_HDR_SHOWROOM
+            cell_sh2.border = BORDER_DATA
             ws.merge_cells(start_row=1, start_column=sh_start_col,
                            end_row=1, end_column=sh_start_col + 1)
 
-        # Row 2 sub-headers
         for sub_key in pair_cols:
             sub_label = "On Hand" if sub_key and sub_key.endswith(SH_OH_SUFFIX) else "Sold"
             col_key_to_excel_col[sub_key] = col_idx
 
             if USE_TWO_ROWS:
                 cell2 = ws.cell(row=2, column=col_idx, value=sub_label)
-                cell2.fill      = _fill(C_HDR_SHOWROOM_L)
-                cell2.font      = _font(bold=True, color=C_WHITE, size=8)
+                cell2.fill      = FILL_HDR_SUB
+                cell2.font      = FONT_HDR_SUB
                 cell2.alignment = ALIGN_CTR
-                cell2.border    = _border()
+                cell2.border    = BORDER_DATA
 
             ws.column_dimensions[get_column_letter(col_idx)].width = 9
             col_idx += 1
@@ -1026,14 +978,14 @@ def generate_report(
             col_w = 14
 
         cell1 = ws.cell(row=1, column=col_idx, value=label_top)
-        cell1.fill      = _fill(C_HDR_SUMMARY)
-        cell1.font      = _font(bold=True, color=C_WHITE, size=9)
+        cell1.fill      = FILL_HDR_SUMMARY
+        cell1.font      = FONT_HDR_WHITE
         cell1.alignment = ALIGN_CTR
-        cell1.border    = _border()
+        cell1.border    = BORDER_DATA
         if USE_TWO_ROWS:
             cell2 = ws.cell(row=2, column=col_idx)
-            cell2.fill   = _fill(C_HDR_SUMMARY)
-            cell2.border = _border()
+            cell2.fill   = FILL_HDR_SUMMARY
+            cell2.border = BORDER_DATA
             ws.merge_cells(start_row=1, start_column=col_idx, end_row=2, end_column=col_idx)
         ws.column_dimensions[get_column_letter(col_idx)].width = col_w
         col_idx += 1
@@ -1044,7 +996,8 @@ def generate_report(
     if USE_TWO_ROWS:
         ws.row_dimensions[2].height = 20
 
-    # ── Column Widths Calculation ──────────────────────────────────────────
+    # ── Fast Column Widths (Sample first 500 rows) ─────────────────────────
+    sample_rows = export_rows[:500] if export_rows else []
     barcode_col_width = 14
     for k in fixed_col_keys:
         spec = COLUMN_SPECS.get(k, {})
@@ -1052,22 +1005,22 @@ def generate_report(
         col_letter = get_column_letter(col_key_to_excel_col[k])
 
         if k == "Barcode":
-            data_lens = [len(str(r.get(k) or '')) for r in export_rows]
+            data_lens = [len(str(r.get(k) or '')) for r in sample_rows]
             max_l = max(data_lens) if data_lens else 10
             barcode_col_width = max(max_l + 3, 13)
             ws.column_dimensions[col_letter].width = barcode_col_width
         elif k == "Product Packages/Barcode":
             ws.column_dimensions[col_letter].width = barcode_col_width
         elif k == "Internal Reference":
-            data_lens = [len(str(r.get(k) or '')) for r in export_rows]
+            data_lens = [len(str(r.get(k) or '')) for r in sample_rows]
             max_l = max(data_lens) if data_lens else 10
             ws.column_dimensions[col_letter].width = max(max_l + 3, 11)
         elif wmode == "data_len":
-            data_lens = [len(str(r.get(k) or '')) for r in export_rows]
+            data_lens = [len(str(r.get(k) or '')) for r in sample_rows]
             max_l = max(data_lens) if data_lens else 8
             ws.column_dimensions[col_letter].width = max(max_l + 3, 10)
         elif wmode == "data_len_capped":
-            data_lens = [len(str(r.get(k) or '')) for r in export_rows]
+            data_lens = [len(str(r.get(k) or '')) for r in sample_rows]
             max_l = max(data_lens) if data_lens else 15
             ws.column_dimensions[col_letter].width = min(max(max_l + 3, 15), 45)
         else:
@@ -1075,42 +1028,55 @@ def generate_report(
             max_line = max([len(line) for line in hdr_text.split('\n')]) if hdr_text else len(k)
             ws.column_dimensions[col_letter].width = max(max_line + 3, 10)
 
-    # ── Write Data Rows ────────────────────────────────────────────────────
-    for data_row_idx, row_data in enumerate(export_rows):
-        excel_row = DATA_START_ROW + data_row_idx
-        is_alt = (data_row_idx % 2 == 1)
+    # ── Fast Write Data Rows ───────────────────────────────────────────────
+    ordered_keys = list(col_key_to_excel_col.keys())
+    ordered_specs = [COLUMN_SPECS.get(k, {}) for k in ordered_keys]
 
-        for k, ec in col_key_to_excel_col.items():
-            spec = COLUMN_SPECS.get(k, {})
+    for data_row_idx, row_data in enumerate(export_rows):
+        if data_row_idx % 2500 == 0:
+            chk()
+            pct = 80 + int((data_row_idx / max(n_data, 1)) * 16)
+            notify(pct, f"كتابة صفوف Excel: {data_row_idx:,}/{n_data:,}...")
+
+        is_alt = (data_row_idx % 2 == 1)
+        row_fill = FILL_ALT if is_alt else None
+
+        row_vals = []
+        for k, spec in zip(ordered_keys, ordered_specs):
             is_date = spec.get("is_date", False)
             raw_val = row_data.get(k, "")
             val = _parse_cell_value(raw_val, is_date=is_date)
+            row_vals.append(val)
 
-            cell = ws.cell(row=excel_row, column=ec, value=val)
-            cell.border = _border()
-            if is_alt:
-                cell.fill = _fill(C_ALT)
+        ws.append(row_vals)
+        excel_row = DATA_START_ROW + data_row_idx
 
-            # Alignment & Number format & Status styling
+        for c_idx, (k, spec, val) in enumerate(zip(ordered_keys, ordered_specs, row_vals), 1):
+            cell = ws.cell(row=excel_row, column=c_idx)
+            cell.border = BORDER_DATA
+            if row_fill:
+                cell.fill = row_fill
+
             align = spec.get("align", ALIGN_CTR)
             cell.alignment = align
 
             if k == "حالة الصنف":
                 if val == "نفد المخزون":
-                    cell.font = _font(bold=True, color="C00000", size=9)
+                    cell.font = FONT_STATUS_OUT
                 elif val == "قارب على النفاذ":
-                    cell.font = _font(bold=True, color="ED7D31", size=9)
+                    cell.font = FONT_STATUS_LOW
                 elif val == "سريع الحركة":
-                    cell.font = _font(bold=True, color="385723", size=9)
+                    cell.font = FONT_STATUS_FAST
                 elif val == "راكد":
-                    cell.font = _font(bold=True, color="7030A0", size=9)
+                    cell.font = FONT_STATUS_SLOW
                 elif val == "فائض المخزون":
-                    cell.font = _font(bold=True, color="2E75B6", size=9)
+                    cell.font = FONT_STATUS_SURP
                 else:
-                    cell.font = _font(bold=False, color="333333", size=9)
+                    cell.font = FONT_STATUS_BAL
             else:
-                cell.font = _font(size=9)
+                cell.font = FONT_DEFAULT
 
+            is_date = spec.get("is_date", False)
             if is_date:
                 cell.number_format = 'yyyy-mm-dd'
             elif isinstance(val, (int, float)):
@@ -1122,14 +1088,10 @@ def generate_report(
                 else:
                     cell.number_format = '#,##0'
 
-        ws.row_dimensions[excel_row].height = 18
-
     # ── Write Totals Row ───────────────────────────────────────────────────
-    n_data = len(export_rows)
     if n_data > 0:
         totals_excel_row = DATA_START_ROW + n_data
 
-        # Determine which text column gets the "▶ الإجماليات" label
         label_col_key = None
         for cand in ["Product Name Arabic", "Name", "Internal Reference"]:
             if cand in col_key_to_excel_col and cand != "Internal Reference":
@@ -1140,110 +1102,108 @@ def generate_report(
             spec = COLUMN_SPECS.get(k, {})
             ttype = spec.get("total_type")
 
-            # Showroom and numeric summary columns sum
             if k.endswith(SH_OH_SUFFIX) or k.endswith(SH_SL_SUFFIX) or k in {"إجمالي رصيد المعارض", "إجمالي مبيعات المعارض", "الطلب المقترح (60 يوم)"}:
                 ttype = "sum"
 
             cell = ws.cell(row=totals_excel_row, column=ec)
-            cell.fill   = _fill(C_TOTALS_BG)
-            cell.font   = _font(bold=True, color=C_TOTALS_FG, size=9)
-            cell.border = _border(C_TOTALS_FG)
+            cell.fill   = FILL_TOTALS
+            cell.font   = FONT_TOTALS
+            cell.border = BORDER_TOTALS
 
-            if ttype == "count":
-                cell.value = n_data
-                cell.alignment = spec.get("align", ALIGN_CTR)
+            align = spec.get("align", ALIGN_CTR)
+            cell.alignment = align
+
+            col_let = get_column_letter(ec)
+            r_start = DATA_START_ROW
+            r_end   = DATA_START_ROW + n_data - 1
+
+            if k == label_col_key:
+                cell.value = "▶ الإجماليات"
+                cell.alignment = ALIGN_RT
+            elif k == "Internal Reference":
+                cell.value = f'=COUNTA({col_let}{r_start}:{col_let}{r_end})'
                 cell.number_format = '#,##0'
             elif ttype == "sum":
-                col_sum = sum(float(r.get(k) or 0) for r in export_rows
-                              if isinstance(r.get(k), (int, float)))
-                cell.value = col_sum
-                cell.alignment = spec.get("align", ALIGN_CTR)
-                if isinstance(col_sum, float) and col_sum != int(col_sum):
-                    cell.number_format = '#,##0.00'
-                else:
-                    cell.number_format = '#,##0'
-            elif k == label_col_key:
-                cell.value = "▶ الإجماليات"
-                cell.alignment = spec.get("align", ALIGN_CTR)
+                cell.value = f'=SUM({col_let}{r_start}:{col_let}{r_end})'
+                nfmt = spec.get("num_format", "#,##0")
+                cell.number_format = nfmt
             else:
                 cell.value = None
-                cell.alignment = ALIGN_CTR
 
         ws.row_dimensions[totals_excel_row].height = 22
 
-    # ── Branch summary sheet ───────────────────────────────────────────────
-    ws2 = wb.create_sheet("مقارنة وتحليل المعارض")
-    ws2.views.sheetView[0].rightToLeft = True
-    ws2.freeze_panes = "A2"
+    # ── Sheet 2: Branch Summary ────────────────────────────────────────────
+    if column_options.get('showrooms', True) and target_showrooms:
+        ws2 = wb.create_sheet(title="ملخص المعارض والفروع")
+        ws2.views.sheetView[0].rightToLeft = True
 
-    branch_rows = []
-    total_sales_all = sum(b['total_sold_units'] for b in branch_summary.values()) or 1.0
-    for s_id, b in sorted(branch_summary.items(), key=lambda x: x[1]['total_sold_units'], reverse=True):
-        brow = {"كود المعرض": b['code'], "اسم المعرض": b['name']}
-        if permissions.get("Showrooms_OnHand", True):
-            brow["إجمالي كمية المخزون (On Hand)"] = b['total_on_hand']
-        if permissions.get("Cost", True) and permissions.get("Showrooms_OnHand", True):
-            brow["قيمة المخزون بالتكلفة"] = round(b['total_cost_value'], 2)
-        if permissions.get("Sales Price", True) and permissions.get("Showrooms_OnHand", True):
-            brow["قيمة المخزون بسعر البيع"] = round(b['total_sales_value'], 2)
-        if permissions.get("Showrooms_Sold", True):
-            brow["إجمالي المبيعات (Sold)"] = b['total_sold_units']
-            brow["نسبة المساهمة (%)"] = round((b['total_sold_units'] / total_sales_all) * 100, 2)
-        branch_rows.append(brow)
+        hdr2 = ["كود الفرع", "اسم المعرض / الفرع", "إجمالي الرصيد (قطع)",
+                "قيمة المخزون بالتكلفة (ر.س)", "قيمة المبيعات بالبيع (ر.س)", "إجمالي المبيعات (قطع)"]
+        for c_i, h_text in enumerate(hdr2, 1):
+            c = ws2.cell(row=1, column=c_i, value=h_text)
+            c.fill      = FILL_HDR_MAIN
+            c.font      = FONT_HDR_WHITE
+            c.alignment = ALIGN_CTR
+            c.border    = BORDER_DATA
 
-    if branch_rows:
-        br_cols = list(branch_rows[0].keys())
-        for ci, col_name in enumerate(br_cols, 1):
-            c = ws2.cell(row=1, column=ci, value=col_name)
-            c.fill = _fill(C_HDR_MAIN); c.font = _font(bold=True, color=C_WHITE, size=10)
-            c.alignment = ALIGN_CTR; c.border = _border()
-            ws2.column_dimensions[get_column_letter(ci)].width = max(len(col_name) + 2, 14)
-        ws2.row_dimensions[1].height = 28
+        ws2.row_dimensions[1].height = 26
 
-        for ri, brow in enumerate(branch_rows, 2):
-            is_alt = (ri % 2 == 0)
-            for ci, col_name in enumerate(br_cols, 1):
-                val = brow.get(col_name, "")
-                c = ws2.cell(row=ri, column=ci, value=val if val != "" else None)
-                c.border = _border()
-                c.font = _font(size=10)
-                if is_alt:
-                    c.fill = _fill(C_ALT)
-                c.alignment = ALIGN_CTR if isinstance(val, (int, float)) else ALIGN_RT
-                if isinstance(val, (int, float)):
-                    c.number_format = '#,##0.00' if isinstance(val, float) and val != int(val) else '#,##0'
-            ws2.row_dimensions[ri].height = 18
+        s_rows = sorted(branch_summary.values(), key=lambda x: x['total_on_hand'], reverse=True)
+        for r_i, s_data in enumerate(s_rows, 2):
+            is_alt = (r_i % 2 == 1)
+            row_fill = FILL_ALT if is_alt else None
 
-        br_totals_row = len(branch_rows) + 2
-        for ci, col_name in enumerate(br_cols, 1):
-            if col_name in {"كود المعرض", "اسم المعرض"}:
-                val = "▶ الإجماليات" if ci == 2 else "─"
-            elif col_name == "نسبة المساهمة (%)":
-                val = 100.0
-            else:
-                val = sum(r.get(col_name, 0) for r in branch_rows if isinstance(r.get(col_name), (int, float)))
-            c = ws2.cell(row=br_totals_row, column=ci, value=val)
-            c.fill = _fill(C_TOTALS_BG); c.font = _font(bold=True, color=C_TOTALS_FG, size=10)
-            c.alignment = ALIGN_CTR; c.border = _border(C_TOTALS_FG)
-            if isinstance(val, (int, float)):
-                c.number_format = '#,##0.00' if isinstance(val, float) and val != int(val) else '#,##0'
-        ws2.row_dimensions[br_totals_row].height = 22
+            vals = [
+                (s_data['code'], ALIGN_CTR, "@"),
+                (s_data['name'], ALIGN_RT, "@"),
+                (s_data['total_on_hand'], ALIGN_CTR, "#,##0"),
+                (s_data['total_cost_value'], ALIGN_RT, "#,##0.00"),
+                (s_data['total_sales_value'], ALIGN_RT, "#,##0.00"),
+                (s_data['total_sold_units'], ALIGN_CTR, "#,##0"),
+            ]
+            for c_i, (v, align, nfmt) in enumerate(vals, 1):
+                c = ws2.cell(row=r_i, column=c_i, value=v)
+                c.font = FONT_DEFAULT
+                c.alignment = align
+                c.number_format = nfmt
+                c.border = BORDER_DATA
+                if row_fill:
+                    c.fill = row_fill
+            ws2.row_dimensions[r_i].height = 18
 
+        last_r = len(s_rows) + 1
+        tot_r  = last_r + 1
+        tot_cells = [
+            (1, "▶ الإجمالي العام", ALIGN_CTR, "@", False),
+            (2, "", ALIGN_RT, "@", False),
+            (3, f"=SUM(C2:C{last_r})", ALIGN_CTR, "#,##0", True),
+            (4, f"=SUM(D2:D{last_r})", ALIGN_RT, "#,##0.00", True),
+            (5, f"=SUM(E2:E{last_r})", ALIGN_RT, "#,##0.00", True),
+            (6, f"=SUM(F2:F{last_r})", ALIGN_CTR, "#,##0", True),
+        ]
+        for c_i, v, align, nfmt, is_formula in tot_cells:
+            c = ws2.cell(row=tot_r, column=c_i, value=v)
+            c.fill   = FILL_TOTALS
+            c.font   = FONT_TOTALS
+            c.alignment = align
+            c.number_format = nfmt
+            c.border = BORDER_TOTALS
+
+        ws2.row_dimensions[tot_r].height = 22
+        col_w2 = [14, 28, 20, 26, 26, 20]
+        for c_i, w in enumerate(col_w2, 1):
+            ws2.column_dimensions[get_column_letter(c_i)].width = w
+
+    notify(98, "جاري حفظ ملف Excel النهائي...")
+    chk()
     wb.save(output_path)
 
-    total_time = round(time.time() - t_start, 2)
-    notify(100, f"✅ اكتمل التصدير في {total_time} ثانية!")
+    elapsed = round(time.time() - t_start, 2)
+    notify(100, f"✅ اكتمل التصدير بنجاح! تم تصدير {n_data:,} صنف في {elapsed} ثانية.")
 
     return {
-        'output_path':    output_path,
-        'total_rows':     len(export_rows),
-        'total_columns':  total_excel_cols,
-        'total_branches': len(branch_rows),
-        'total_time':     total_time
+        'success': True,
+        'output_path': output_path,
+        'total_records': n_data,
+        'elapsed_seconds': elapsed
     }
-
-
-if __name__ == "__main__":
-    r = generate_report()
-    print("Result:", r)
-
