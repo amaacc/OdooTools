@@ -7,7 +7,7 @@ OPTIMIZATION ARCHITECTURE:
   Phase 1 — Parallel global lookups (taxes, tags, packages, pricelist, showrooms)
   Phase 2 — Multi-threaded concurrent batch retrieval & in-memory Python filtering
   Phase 3 — Adaptive smart auxiliary fetching (chunked parallel queries / zero-timeout server aggregations)
-  Phase 4 — Instant vectorized dictionary row construction
+  Phase 4 — Instant vectorized dictionary row construction & movement filtering
   Phase 5 — High-speed Excel streaming with pre-allocated styling, progress heartbeats & RTL layout
 """
 
@@ -138,10 +138,13 @@ def generate_report(
     sales_period="all",
     custom_date_from=None,
     custom_date_to=None,
+    movement_filter="all",
     column_options=None,
     output_path=None,
     progress_callback=None,
-    cancel_check_callback=None
+    cancel_check_callback=None,
+    is_cancelled=None,
+    **kwargs
 ):
     """
     Main export function with high-performance parallel pipelines.
@@ -166,6 +169,8 @@ def generate_report(
 
     def chk():
         if cancel_check_callback and cancel_check_callback():
+            raise InterruptedError("تم إلغاء التصدير من قبل المستخدم.")
+        if is_cancelled and is_cancelled():
             raise InterruptedError("تم إلغاء التصدير من قبل المستخدم.")
 
     notify(2, "جاري الاتصال الآمن بنظام Odoo...")
@@ -407,7 +412,6 @@ def generate_report(
                                               'price_discounted', 'last_purchase_date', 'write_date'],
                                    'order': 'sequence asc, id asc'})
         else:
-            # Parallel chunking for massive template lists
             def _get_sup_chunk(chunk):
                 mt = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
                 return safe_execute_kw(mt, db, uid, password, 'product.supplierinfo', 'search_read',
@@ -571,6 +575,66 @@ def generate_report(
         v_info = vendor_tmpl_map.get(tid, {})
         last_rcv_qty = last_received_map.get(pid, 0.0)
 
+        # Showroom stock & sales calculation
+        sh_oh_total = 0.0
+        sh_sl_total = 0.0
+        sh_row_dict = {}
+
+        if column_options.get('showrooms', True):
+            for s in target_showrooms:
+                s_id = s['id']
+                lot  = s['lot_stock_id']
+                sh_oh = stock_map.get((pid, lot), 0.0) if lot else 0.0
+                sh_sl = showroom_sales.get(s_id, {}).get(pid, 0.0)
+
+                sh_oh_total += sh_oh
+                sh_sl_total += sh_sl
+
+                branch_summary[s_id]['total_on_hand']     += sh_oh
+                branch_summary[s_id]['total_cost_value']  += (sh_oh * cost_val)
+                branch_summary[s_id]['total_sales_value'] += (sh_sl * price_val)
+                branch_summary[s_id]['total_sold_units']  += sh_sl
+
+                s_name = s['name']
+                if permissions.get("Showrooms_OnHand", True):
+                    sh_row_dict[f"{s_name} / On Hand"] = sh_oh
+                if permissions.get("Showrooms_Sold", True):
+                    sh_row_dict[f"{s_name} / Sold"] = sh_sl
+
+        # Calculate analytics values
+        analysis_oh = sh_oh_total if column_options.get('showrooms', True) else qty_oh
+        analysis_sl = sh_sl_total if column_options.get('showrooms', True) else total_sold
+        monthly_sales = analysis_sl / 12.0
+
+        if analysis_oh <= 0:
+            if analysis_sl > 0:
+                item_status = "نفد المخزون"
+            else:
+                item_status = "غير متوفر"
+        elif analysis_sl <= 0:
+            item_status = "راكد"
+        else:
+            days_cover = (analysis_oh / analysis_sl) * 365.0
+            if days_cover <= 20 or (analysis_oh <= 5 and analysis_sl >= 10):
+                item_status = "قارب على النفاذ"
+            elif days_cover <= 60 or monthly_sales >= 15:
+                item_status = "سريع الحركة"
+            elif days_cover >= 180:
+                item_status = "فائض المخزون"
+            else:
+                item_status = "متوازن"
+
+        # Movement filter check
+        if movement_filter == "fast_moving":
+            if not (item_status == "سريع الحركة" or monthly_sales >= 15 or total_sold >= 15):
+                continue
+        elif movement_filter == "stagnant":
+            if not (item_status == "راكد" or total_sold <= 0):
+                continue
+        elif movement_filter == "low_stock":
+            if not (item_status in ("نفد المخزون", "قارب على النفاذ") or (qty_oh <= 5 and total_sold > 0)):
+                continue
+
         row = {}
         if column_options.get('basic_info', True):
             row["Internal Reference"] = code_val
@@ -617,30 +681,8 @@ def generate_report(
             if permissions.get("Last Received Qty", True):
                 row["Last Received Qty"] = last_rcv_qty
 
-        sh_oh_total = 0.0
-        sh_sl_total = 0.0
-
         if column_options.get('showrooms', True):
-            for s in target_showrooms:
-                s_id = s['id']
-                lot  = s['lot_stock_id']
-                sh_oh = stock_map.get((pid, lot), 0.0) if lot else 0.0
-                sh_sl = showroom_sales.get(s_id, {}).get(pid, 0.0)
-
-                sh_oh_total += sh_oh
-                sh_sl_total += sh_sl
-
-                branch_summary[s_id]['total_on_hand']     += sh_oh
-                branch_summary[s_id]['total_cost_value']  += (sh_oh * cost_val)
-                branch_summary[s_id]['total_sales_value'] += (sh_sl * price_val)
-                branch_summary[s_id]['total_sold_units']  += sh_sl
-
-                s_name = s['name']
-                if permissions.get("Showrooms_OnHand", True):
-                    row[f"{s_name} / On Hand"] = sh_oh
-                if permissions.get("Showrooms_Sold", True):
-                    row[f"{s_name} / Sold"] = sh_sl
-
+            row.update(sh_row_dict)
             if permissions.get("Showrooms_OnHand", True):
                 row["إجمالي رصيد المعارض"] = sh_oh_total
             if permissions.get("Showrooms_Sold", True):
@@ -648,38 +690,14 @@ def generate_report(
 
         # ── Smart Inventory Analytics & Supply Chain Suggestions ────────────
         if column_options.get('analytics', True):
-            analysis_oh = sh_oh_total if column_options.get('showrooms', True) else qty_oh
-            analysis_sl = sh_sl_total if column_options.get('showrooms', True) else total_sold
-            monthly_sales = analysis_sl / 12.0
-
-            # 1. Product Status
             if permissions.get("حالة الصنف", True):
-                if analysis_oh <= 0:
-                    if analysis_sl > 0:
-                        item_status = "نفد المخزون"
-                    else:
-                        item_status = "غير متوفر"
-                elif analysis_sl <= 0:
-                    item_status = "راكد"
-                else:
-                    days_cover = (analysis_oh / analysis_sl) * 365.0
-                    if days_cover <= 20 or (analysis_oh <= 5 and analysis_sl >= 10):
-                        item_status = "قارب على النفاذ"
-                    elif days_cover <= 60 or monthly_sales >= 15:
-                        item_status = "سريع الحركة"
-                    elif days_cover >= 180:
-                        item_status = "فائض المخزون"
-                    else:
-                        item_status = "متوازن"
                 row["حالة الصنف"] = item_status
 
-            # 2. Suggested 60-Day Reorder Quantity (Target buffer: 2 months demand)
             if permissions.get("الطلب المقترح (60 يوم)", True):
                 target_60d = monthly_sales * 2.0
                 suggested_60d_qty = max(0.0, round(target_60d - analysis_oh))
                 row["الطلب المقترح (60 يوم)"] = suggested_60d_qty
 
-            # 3. Inter-branch transfer recommendations
             if permissions.get("توصيات المناقلة", True) and column_options.get('showrooms', True) and target_showrooms:
                 transfer_recs = []
                 deficits = []
@@ -1205,5 +1223,8 @@ def generate_report(
         'success': True,
         'output_path': output_path,
         'total_records': n_data,
+        'total_rows': n_data,
+        'total_columns': total_excel_cols,
+        'total_time': elapsed,
         'elapsed_seconds': elapsed
     }
