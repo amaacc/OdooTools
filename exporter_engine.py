@@ -47,11 +47,11 @@ def match_wildcards(text_or_list, patterns):
     if not patterns:
         return True
     items = text_or_list if isinstance(text_or_list, (list, tuple, set)) else [text_or_list]
-    clean_items = [str(it).strip().lower() for it in items if it]
+    clean_items = [" ".join(str(it).strip().lower().split()) for it in items if it]
     if not clean_items:
         return False
     for pat in patterns:
-        pc = pat.strip().lower()
+        pc = " ".join(str(pat).strip().lower().split())
         if not pc:
             continue
         is_wc = '*' in pc or '?' in pc
@@ -290,31 +290,65 @@ def generate_report(
         if no_wc and not has_wc:
             base_domain.append(['default_code', 'in', no_wc])
         else:
-            stem = ref_pat[0].replace('*', '').replace('?', '')
-            if stem:
-                base_domain.append(['default_code', 'ilike', stem])
+            stems = [t.replace('*', '').replace('?', '').strip() for t in ref_pat if t.strip()]
+            if len(stems) == 1:
+                base_domain.append(['default_code', 'ilike', stems[0]])
+            elif len(stems) > 1:
+                for _ in range(len(stems) - 1):
+                    base_domain.append('|')
+                for s in stems:
+                    base_domain.append(['default_code', 'ilike', s])
             need_python_ref = True
 
     if nm_pat:
         has_wc = any('*' in t or '?' in t for t in nm_pat)
-        stem = nm_pat[0].replace('*', '').replace('?', '')
-        if stem:
-            base_domain += ['|', ['name', 'ilike', stem],
-                                  ['product_name_arabic', 'ilike', stem]]
+        stems = [t.replace('*', '').replace('?', '').strip() for t in nm_pat if t.strip()]
+        if stems:
+            clauses = []
+            for s in stems:
+                clauses.append(['|', ['name', 'ilike', s], ['product_name_arabic', 'ilike', s]])
+            if len(clauses) == 1:
+                base_domain.extend(clauses[0])
+            else:
+                for _ in range(len(clauses) - 1):
+                    base_domain.append('|')
+                for cl in clauses:
+                    base_domain.extend(cl)
         if has_wc or len(nm_pat) > 1:
             need_python_name = True
 
     if bc_pat:
-        stem = bc_pat[0].replace('*', '').replace('?', '')
-        if stem:
-            base_domain += ['|', ['barcode', 'ilike', stem],
-                                  ['packaging_ids.barcode', 'ilike', stem]]
+        stems = [t.replace('*', '').replace('?', '').strip() for t in bc_pat if t.strip()]
+        if stems:
+            clauses = []
+            for s in stems:
+                clauses.append(['|', ['barcode', 'ilike', s], ['packaging_ids.barcode', 'ilike', s]])
+            if len(clauses) == 1:
+                base_domain.extend(clauses[0])
+            else:
+                for _ in range(len(clauses) - 1):
+                    base_domain.append('|')
+                for cl in clauses:
+                    base_domain.extend(cl)
         need_python_bc = True
 
     if tg_pat:
-        stem = tg_pat[0].replace('*', '').replace('?', '')
-        if stem:
-            base_domain.append(['product_tag_ids.name', 'ilike', stem])
+        # Match against loaded tag_map from Phase 1 to get all matching tag IDs
+        matched_tag_ids = [
+            tid for tid, tname in tag_map.items()
+            if match_wildcards(tname, tg_pat)
+        ]
+        if matched_tag_ids:
+            base_domain.append(['product_tag_ids', 'in', matched_tag_ids])
+        else:
+            stems = [t.replace('*', '').replace('?', '').strip() for t in tg_pat if t.strip()]
+            if len(stems) == 1:
+                base_domain.append(['product_tag_ids.name', 'ilike', stems[0]])
+            elif len(stems) > 1:
+                for _ in range(len(stems) - 1):
+                    base_domain.append('|')
+                for s in stems:
+                    base_domain.append(['product_tag_ids.name', 'ilike', s])
         need_python_tags = True
 
     all_product_ids = safe_execute_kw(models, db, uid, password,
