@@ -121,7 +121,7 @@ class TagMultiSelect(ctk.CTkFrame):
     """
     def __init__(self, master, tags_list=None, **kwargs):
         super().__init__(master, **kwargs)
-        self._all_tags = sorted(tags_list or [])
+        self._all_tags = self._extract_tag_names(tags_list)
         self._selected = []
         self._dropdown_open = False
         self._dropdown_items = []
@@ -135,13 +135,17 @@ class TagMultiSelect(ctk.CTkFrame):
         self._entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
         self._entry.bind("<KeyRelease>", self._on_key)
         self._entry.bind("<space>", self._on_space)
+        self._entry.bind("<FocusIn>", self._on_key)
 
         ctk.CTkButton(top, text="✕ مسح الكل", width=90, height=36,
                       fg_color=BRAND_SLATE, hover_color=BRAND_SLATE_HOVER,
                       font=ctk.CTkFont(APP_FONT, 11), command=self._clear_all).pack(side="left")
 
-        # ─ Dropdown list ─
-        self._dropdown_frame = ctk.CTkScrollableFrame(self, height=130, fg_color=("white", "#1E293B"),
+        # ─ Dropdown container ─
+        self._dropdown_container = ctk.CTkFrame(self, fg_color="transparent")
+        self._dropdown_container.pack(fill="x")
+
+        self._dropdown_frame = ctk.CTkScrollableFrame(self._dropdown_container, height=140, fg_color=("white", "#1E293B"),
                                                       border_width=1, border_color=("#CBD5E1", "#334155"),
                                                       corner_radius=6)
 
@@ -151,7 +155,21 @@ class TagMultiSelect(ctk.CTkFrame):
                                                    corner_radius=6)
         self._chips_frame.pack(fill="x", pady=(6, 0))
 
-        self._refresh_dropdown(self._all_tags[:40])
+        self._redraw_chips()
+
+    def _extract_tag_names(self, tags_list):
+        cleaned = []
+        if not tags_list:
+            return cleaned
+        for item in tags_list:
+            if isinstance(item, dict):
+                n = str(item.get('name') or '').strip()
+            else:
+                n = str(item or '').strip()
+            n = " ".join(n.split())
+            if n and n not in cleaned:
+                cleaned.append(n)
+        return sorted(cleaned, key=lambda s: s.lower())
 
     def _on_key(self, event=None):
         text = self._entry.get().strip().lower().rstrip(" ")
@@ -248,7 +266,10 @@ class TagMultiSelect(ctk.CTkFrame):
 
     def set_tags_list(self, tags_list):
         """Update available tags list (after fetching from Odoo)."""
-        self._all_tags = sorted(tags_list or [])
+        self._all_tags = self._extract_tag_names(tags_list)
+        text = self._entry.get().strip().lower().rstrip(" ")
+        if text:
+            self._on_key()
 
 
 # ─────────────────────────────────────────────────────────
