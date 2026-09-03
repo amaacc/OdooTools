@@ -898,6 +898,14 @@ class OdooReportApp(ctk.CTk):
         self._f_name.delete(0, "end")
         self._tag_selector._clear_all()
 
+    def _select_showrooms(self):
+        for v in self.showroom_vars.values():
+            v.set(True)
+
+    def _deselect_showrooms(self):
+        for v in self.showroom_vars.values():
+            v.set(False)
+
     def _select_only_showrooms(self):
         custom_types = load_showroom_types()
         for s in self.showrooms:
