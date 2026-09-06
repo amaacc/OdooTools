@@ -25,6 +25,7 @@ ALL_PROTECTED_FIELDS = [
     ("Last Received Qty", "الكمية المستلمة في آخر شراء (Last Received Qty)"),
     ("Showrooms_OnHand", "أرصدة المعارض التفصيلية (Showrooms On Hand)"),
     ("Showrooms_Sold", "مبيعات المعارض التفصيلية (Showrooms Sold)"),
+    ("تصنيف ABC", "تصنيف باريتو للمنتجات (ABC Classification)"),
     ("أيام التغطية", "أيام تغطية المخزون (Days of Inventory)"),
     ("حالة الصنف", "حالة الصنف (Item Status)"),
     ("الطلب المقترح (60 يوم)", "الطلب المقترح 60 يوم (Suggested Order)"),

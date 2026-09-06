@@ -770,6 +770,9 @@ def generate_report(
                 suggested_val = round(suggested_60d_qty * buy_p, 2)
                 row["قيمة الطلب المقترح"] = suggested_val
 
+            if permissions.get("تصنيف ABC", True):
+                row["تصنيف ABC"] = "C"
+
             if permissions.get("توصيات المناقلة", True) and column_options.get('showrooms', True) and target_showrooms:
                 transfer_recs = []
                 deficits = []
@@ -779,23 +782,57 @@ def generate_report(
                     lot = s['lot_stock_id']
                     oh = stock_map.get((pid, lot), 0.0) if lot else 0.0
                     sl = showroom_sales.get(s_id, {}).get(pid, 0.0)
+                    sh_monthly = (sl / (period_days / 30.0)) if period_days > 0 else (sl / 12.0)
                     if oh <= 1 and sl > 0:
-                        deficits.append((s['name'], oh, sl))
-                    elif oh >= 4 and (sl == 0 or oh > (sl / 12.0) * 4):
-                        surpluses.append((s['name'], oh, sl))
+                        needed_qty = max(1.0, round(sh_monthly - oh))
+                        deficits.append((s['name'], oh, sl, needed_qty))
+                    elif oh >= 3:
+                        keep_buffer = max(1.0, round(sh_monthly * 1.5))
+                        surplus_qty = max(0.0, oh - keep_buffer)
+                        if surplus_qty >= 1.0:
+                            surpluses.append((s['name'], oh, sl, surplus_qty))
 
                 if deficits and surpluses:
                     deficits.sort(key=lambda x: x[2], reverse=True)
-                    surpluses.sort(key=lambda x: x[1], reverse=True)
+                    surpluses.sort(key=lambda x: x[3], reverse=True)
                     for i in range(min(len(deficits), len(surpluses), 2)):
                         from_name = surpluses[i][0].replace("معرض ", "").replace("فرع ", "").strip()
                         to_name   = deficits[i][0].replace("معرض ", "").replace("فرع ", "").strip()
-                        transfer_recs.append(f"من {from_name} إلى {to_name}")
+                        transfer_qty = int(max(1, min(deficits[i][3], surpluses[i][3])))
+                        transfer_recs.append(f"من {from_name} ({transfer_qty}) إلى {to_name}")
 
                 transfer_note = " | ".join(transfer_recs) if transfer_recs else "─"
                 row["توصيات المناقلة"] = transfer_note
 
+        row['_revenue'] = (analysis_sl * price_val) if price_val > 0 else (analysis_sl * cost_val)
         export_rows.append(row)
+
+    # ── Post-process: Pareto ABC Classification across all exported products ──
+    if column_options.get('analytics', True) and permissions.get("تصنيف ABC", True) and export_rows:
+        total_rev = sum(r.get('_revenue', 0.0) for r in export_rows)
+        if total_rev > 0:
+            indexed_revs = sorted(enumerate(export_rows), key=lambda x: x[1].get('_revenue', 0.0), reverse=True)
+            cum_rev = 0.0
+            for idx, r in indexed_revs:
+                rev = r.get('_revenue', 0.0)
+                if rev <= 0:
+                    r["تصنيف ABC"] = "C"
+                else:
+                    cum_rev += rev
+                    cum_pct = (cum_rev / total_rev) * 100.0
+                    if cum_pct <= 80.0:
+                        r["تصنيف ABC"] = "A"
+                    elif cum_pct <= 95.0:
+                        r["تصنيف ABC"] = "B"
+                    else:
+                        r["تصنيف ABC"] = "C"
+        else:
+            for r in export_rows:
+                r["تصنيف ABC"] = "C"
+
+    # Clean temporary helper key
+    for r in export_rows:
+        r.pop('_revenue', None)
 
     n_data = len(export_rows)
     notify(80, f"تم بناء {n_data:,} سجل. جاري إنشاء وتنسيق ملف Excel...")
@@ -854,6 +891,7 @@ def generate_report(
     BORDER_TOTALS = Border(left=s_totals, right=s_totals, top=s_totals, bottom=s_totals)
 
     ALIGN_CTR = Alignment(horizontal="center", vertical="center", wrap_text=False)
+    ALIGN_HDR = Alignment(horizontal="center", vertical="center", wrap_text=True)
     ALIGN_RT  = Alignment(horizontal="right",  vertical="center", wrap_text=False)
     ALIGN_LT  = Alignment(horizontal="left",   vertical="center", wrap_text=False)
 
@@ -904,13 +942,13 @@ def generate_report(
             "header": "Min P", "align": ALIGN_RT, "num_format": "#,##0.00", "total_type": None, "width_mode": "auto"
         },
         "Quantity On Hand": {
-            "header": "Quantity On Hand", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
+            "header": "Quantity\nOn Hand", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
         },
         "365d Sold": {
-            "header": "365d Sold", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
+            "header": "365d\nSold", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
         },
         "Sold": {
-            "header": "365d Sold", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
+            "header": "365d\nSold", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
         },
         "Vendors": {
             "header": "Vendor", "align": ALIGN_LT, "num_format": "@", "total_type": None, "width_mode": "data_len_capped"
@@ -931,13 +969,16 @@ def generate_report(
             "header": "Last\nUpdated", "align": ALIGN_CTR, "num_format": "yyyy-mm-dd", "total_type": None, "width_mode": "auto", "is_date": True
         },
         "Last Received Qty": {
-            "header": "Last\nReceived Qty", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
+            "header": "Last Qty\nReceived", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
         },
         "إجمالي رصيد المعارض": {
             "header": "إجمالي رصيد\nالمعارض", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
         },
         "إجمالي مبيعات المعارض": {
             "header": "إجمالي مبيعات\nالمعارض", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
+        },
+        "تصنيف ABC": {
+            "header": "تصنيف\nABC", "align": ALIGN_CTR, "num_format": "@", "total_type": None, "width_mode": "auto"
         },
         "أيام التغطية": {
             "header": "أيام التغطية\n(DOI)", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": None, "width_mode": "auto"
@@ -974,7 +1015,7 @@ def generate_report(
 
     SH_OH_SUFFIX = " / On Hand"
     SH_SL_SUFFIX = " / Sold"
-    SUMMARY_COLS = ["إجمالي رصيد المعارض", "إجمالي مبيعات المعارض", "أيام التغطية", "حالة الصنف", "الطلب المقترح (60 يوم)", "قيمة الطلب المقترح", "توصيات المناقلة"]
+    SUMMARY_COLS = ["إجمالي رصيد المعارض", "إجمالي مبيعات المعارض", "تصنيف ABC", "أيام التغطية", "حالة الصنف", "الطلب المقترح (60 يوم)", "قيمة الطلب المقترح", "توصيات المناقلة"]
 
     fixed_col_keys = [k for k in all_col_keys
                       if not k.endswith(SH_OH_SUFFIX) and not k.endswith(SH_SL_SUFFIX)
@@ -1022,12 +1063,13 @@ def generate_report(
         cell1 = ws.cell(row=1, column=col_idx, value=hdr_text)
         cell1.fill      = FILL_HDR_MAIN
         cell1.font      = FONT_HDR_WHITE
-        cell1.alignment = ALIGN_CTR
+        cell1.alignment = ALIGN_HDR
         cell1.border    = BORDER_DATA
 
         if USE_TWO_ROWS:
             cell2 = ws.cell(row=2, column=col_idx)
             cell2.fill   = FILL_HDR_MAIN
+            cell2.alignment = ALIGN_HDR
             cell2.border = BORDER_DATA
             ws.merge_cells(start_row=1, start_column=col_idx, end_row=2, end_column=col_idx)
 
@@ -1048,12 +1090,13 @@ def generate_report(
         cell_sh = ws.cell(row=1, column=sh_start_col, value=sh_name)
         cell_sh.fill      = fill_sh
         cell_sh.font      = FONT_HDR_WHITE
-        cell_sh.alignment = ALIGN_CTR
+        cell_sh.alignment = ALIGN_HDR
         cell_sh.border    = BORDER_DATA
 
         if USE_TWO_ROWS and pair_count == 2:
             cell_sh2 = ws.cell(row=1, column=sh_start_col + 1)
             cell_sh2.fill   = fill_sh
+            cell_sh2.alignment = ALIGN_HDR
             cell_sh2.border = BORDER_DATA
             ws.merge_cells(start_row=1, start_column=sh_start_col,
                            end_row=1, end_column=sh_start_col + 1)
@@ -1066,7 +1109,7 @@ def generate_report(
                 cell2 = ws.cell(row=2, column=col_idx, value=sub_label)
                 cell2.fill      = fill_sub
                 cell2.font      = FONT_HDR_SUB
-                cell2.alignment = ALIGN_CTR
+                cell2.alignment = ALIGN_HDR
                 cell2.border    = BORDER_DATA
 
             ws.column_dimensions[get_column_letter(col_idx)].width = 9
@@ -1081,6 +1124,9 @@ def generate_report(
         elif "مبيعات" in k:
             label_top = "إجمالي مبيعات\nالمعارض"
             col_w = 14
+        elif "ABC" in k or "تصنيف" in k:
+            label_top = "تصنيف\nABC"
+            col_w = 10
         elif "تغطية" in k or "أيام" in k:
             label_top = "أيام التغطية\n(DOI)"
             col_w = 12
@@ -1103,11 +1149,12 @@ def generate_report(
         cell1 = ws.cell(row=1, column=col_idx, value=label_top)
         cell1.fill      = FILL_HDR_SUMMARY
         cell1.font      = FONT_HDR_WHITE
-        cell1.alignment = ALIGN_CTR
+        cell1.alignment = ALIGN_HDR
         cell1.border    = BORDER_DATA
         if USE_TWO_ROWS:
             cell2 = ws.cell(row=2, column=col_idx)
             cell2.fill   = FILL_HDR_SUMMARY
+            cell2.alignment = ALIGN_HDR
             cell2.border = BORDER_DATA
             ws.merge_cells(start_row=1, start_column=col_idx, end_row=2, end_column=col_idx)
         ws.column_dimensions[get_column_letter(col_idx)].width = col_w
@@ -1196,6 +1243,13 @@ def generate_report(
                     cell.font = FONT_STATUS_SURP
                 else:
                     cell.font = FONT_STATUS_BAL
+            elif k == "تصنيف ABC":
+                if val == "A":
+                    cell.font = Font(name="Segoe UI", size=10, bold=True, color="1E7E34")
+                elif val == "B":
+                    cell.font = Font(name="Segoe UI", size=10, bold=True, color="0056B3")
+                else:
+                    cell.font = Font(name="Segoe UI", size=9, bold=False, color="6C757D")
             else:
                 cell.font = FONT_DEFAULT
 

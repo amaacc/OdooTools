@@ -830,7 +830,7 @@ class OdooReportApp(ctk.CTk):
                                    "Vendors/Discounted Price", "Vendors/Last Purchase",
                                    "Vendors/Last Updated on", "Last Received Qty"]),
             ("🏬 المعارض التفصيلية", ["Showrooms_OnHand", "Showrooms_Sold"]),
-            ("📈 تحليلات وتوصيات المخزون", ["أيام التغطية", "حالة الصنف", "الطلب المقترح (60 يوم)", "قيمة الطلب المقترح", "توصيات المناقلة"]),
+            ("📈 تحليلات وتوصيات المخزون", ["تصنيف ABC", "أيام التغطية", "حالة الصنف", "الطلب المقترح (60 يوم)", "قيمة الطلب المقترح", "توصيات المناقلة"]),
         ]
 
         field_label_map = {f_id: f_label for f_id, f_label in ALL_PROTECTED_FIELDS}
