@@ -36,6 +36,7 @@ BRAND_PURPLE = "#7C3AED"
 BRAND_PURPLE_HOVER = "#6D28D9"
 BRAND_SLATE = "#64748B"
 BRAND_SLATE_HOVER = "#475569"
+BRAND_DARK = ("#1E293B", "#0F172A")
 
 APP_FONT = "Segoe UI"
 
@@ -963,17 +964,28 @@ class OdooReportApp(ctk.CTk):
 
         dlg = ctk.CTkToplevel(self)
         dlg.title("🏢 تعديل تصنيف فروع الشركة (معارض / عناية)")
-        dlg.geometry("600x640")
+        dlg.geometry("620x660")
         dlg.resizable(True, True)
+        dlg.transient(self)
         dlg.grab_set()
+        dlg.lift()
+        dlg.focus_force()
 
         # Header
-        hdr = ctk.CTkFrame(dlg, fg_color=BRAND_DARK, corner_radius=0)
+        hdr = ctk.CTkFrame(dlg, fg_color=(BRAND_BLUE, "#0F1E33"), height=60, corner_radius=0)
         hdr.pack(fill="x")
-        ctk.CTkLabel(hdr, text="🏢  تصنيف فروع الشركة (معارض / عناية)",
-                     font=ctk.CTkFont(APP_FONT, 14, "bold"), text_color="white").pack(anchor="e", padx=16, pady=(10, 2))
-        ctk.CTkLabel(hdr, text="حدد نوع كل فرع (معارض أو عناية). فروع العناية تُلوَّن باللون الفيروزي الفاتح في التقرير.",
-                     font=ctk.CTkFont(APP_FONT, 10), text_color="gray70").pack(anchor="e", padx=16, pady=(0, 10))
+        hdr.pack_propagate(False)
+
+        accent = ctk.CTkFrame(hdr, fg_color=BRAND_GOLD, width=6, corner_radius=0)
+        accent.pack(side="right", fill="y")
+
+        hdr_content = ctk.CTkFrame(hdr, fg_color="transparent")
+        hdr_content.pack(side="right", fill="both", expand=True, padx=14, pady=8)
+
+        ctk.CTkLabel(hdr_content, text="🏢  تصنيف فروع الشركة (معارض / عناية)",
+                     font=ctk.CTkFont(APP_FONT, 14, "bold"), text_color="white").pack(anchor="e")
+        ctk.CTkLabel(hdr_content, text="حدد نوع كل فرع (معارض أو عناية). فروع العناية تُلوَّن باللون الفيروزي الفاتح في التقرير والملخصات.",
+                     font=ctk.CTkFont(APP_FONT, 10), text_color="gray80").pack(anchor="e")
 
         # Current types
         current_types = load_showroom_types()
@@ -984,24 +996,28 @@ class OdooReportApp(ctk.CTk):
         scroll.pack(fill="both", expand=True, padx=12, pady=8)
 
         # Table Header
-        th = ctk.CTkFrame(scroll, fg_color=BRAND_BLUE, corner_radius=4)
+        th = ctk.CTkFrame(scroll, fg_color=(BRAND_BLUE, "#1E3A8A"), corner_radius=4)
         th.pack(fill="x", pady=(0, 6))
         ctk.CTkLabel(th, text="اسم المعرض / الفرع", font=ctk.CTkFont(APP_FONT, 11, "bold"), text_color="white").pack(side="right", padx=14, pady=5)
         ctk.CTkLabel(th, text="نوع الفرع", font=ctk.CTkFont(APP_FONT, 11, "bold"), text_color="white").pack(side="left", padx=45, pady=5)
 
         for s in self.showrooms:
-            code = s['code']
-            name = s['name']
+            code = s.get('code') or ''
+            name = s.get('name') or ''
             current_cat = get_showroom_category(code, name, current_types)
 
             row_frame = ctk.CTkFrame(scroll, fg_color=("white", "#1B2838"), corner_radius=4)
             row_frame.pack(fill="x", pady=2)
 
-            lbl_text = f"[{code}]  {name}"
+            lbl_text = f"[{code}]  {name}" if code else name
             ctk.CTkLabel(row_frame, text=lbl_text, font=ctk.CTkFont(APP_FONT, 11)).pack(side="right", padx=10, pady=6)
 
             seg_var = ctk.StringVar(value="عناية" if current_cat == "care" else "معارض")
-            var_map[code] = (seg_var, name)
+            var_map[s['id']] = {
+                'code': code,
+                'name': name,
+                'var': seg_var
+            }
 
             seg = ctk.CTkSegmentedButton(
                 row_frame,
@@ -1019,20 +1035,24 @@ class OdooReportApp(ctk.CTk):
         btn_bar.pack(fill="x", padx=12, pady=10)
 
         def _reset_default():
-            for code, (var, name) in var_map.items():
-                is_care = is_default_care_showroom(code, name)
-                var.set("عناية" if is_care else "معارض")
+            for item in var_map.values():
+                is_care = is_default_care_showroom(item['code'], item['name'])
+                item['var'].set("عناية" if is_care else "معارض")
 
         def _save():
             new_types = {}
-            for code, (var, name) in var_map.items():
-                cat = "care" if var.get() == "عناية" else "showroom"
-                new_types[code] = cat
-                new_types[name] = cat
+            for item in var_map.values():
+                cat = "care" if item['var'].get() == "عناية" else "showroom"
+                c = str(item['code'] or '').strip()
+                n = str(item['name'] or '').strip()
+                if c:
+                    new_types[c] = cat
+                if n:
+                    new_types[n] = cat
             save_showroom_types(new_types)
             self._populate_showrooms()
             dlg.destroy()
-            messagebox.showinfo("تم الحفظ", "✅ تم حفظ تصنيفات المعارض بنجاح!")
+            messagebox.showinfo("تم الحفظ", "✅ تم حفظ وتحديث تصنيفات المعارض بنجاح!")
 
         ctk.CTkButton(btn_bar, text="🔄 استعادة الافتراضي",
                       fg_color=BRAND_SLATE, hover_color=BRAND_SLATE_HOVER,
@@ -1061,6 +1081,7 @@ class OdooReportApp(ctk.CTk):
 
     def _populate_showrooms(self):
         self._sh_loading.pack_forget()
+        prev_selected = {sid: var.get() for sid, var in self.showroom_vars.items()}
         self.showroom_vars.clear()
         for w in self._sh_scroll.winfo_children():
             w.destroy()
@@ -1088,7 +1109,7 @@ class OdooReportApp(ctk.CTk):
 
             row, col = 0, 0
             for s in care_showrooms:
-                var = ctk.BooleanVar(value=True)
+                var = ctk.BooleanVar(value=prev_selected.get(s['id'], True))
                 self.showroom_vars[s['id']] = var
                 chk = ctk.CTkCheckBox(care_grid,
                                        text=f"[{s['code']}] {s['name']}",
@@ -1113,7 +1134,7 @@ class OdooReportApp(ctk.CTk):
 
             row, col = 0, 0
             for s in std_showrooms:
-                var = ctk.BooleanVar(value=True)
+                var = ctk.BooleanVar(value=prev_selected.get(s['id'], True))
                 self.showroom_vars[s['id']] = var
                 chk = ctk.CTkCheckBox(std_grid,
                                        text=f"[{s['code']}] {s['name']}",

@@ -4,6 +4,7 @@ Designed by: عبدالله الخطيب (Abdullah Al-Khatib)
 """
 
 import os
+import sys
 import json
 
 DEFAULT_CARE_KEYWORDS = ["الصفاء", "الصفا", "الطايف", "الطائف", "الحمدانية", "الحمدانيه", "سوق الشاطئ", "الشاطئ", "الشاطي"]
@@ -16,6 +17,8 @@ def _get_config_path():
     return os.path.join(dir_path, "showroom_types.json")
 
 def _get_local_config_path():
+    if getattr(sys, 'frozen', False):
+        return os.path.join(os.path.dirname(sys.executable), "showroom_types.json")
     return os.path.join(r"c:\OdooDB", "showroom_types.json")
 
 def is_default_care_showroom(code, name):
@@ -36,7 +39,9 @@ def load_showroom_types():
         if os.path.exists(path):
             try:
                 with open(path, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        return data
             except Exception:
                 pass
     return {}
@@ -46,14 +51,16 @@ def save_showroom_types(types_dict):
     Saves showroom classifications persistently.
     """
     payload = json.dumps(types_dict, ensure_ascii=False, indent=2)
+    saved = False
     for path in [_get_config_path(), _get_local_config_path()]:
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(payload)
+            saved = True
         except Exception:
             pass
-    return True
+    return saved
 
 def get_showroom_category(s_code, s_name, custom_types_map=None):
     """
@@ -66,9 +73,9 @@ def get_showroom_category(s_code, s_name, custom_types_map=None):
     n_str = str(s_name or '').strip()
 
     # Check custom config by code, then by name
-    if c_str in custom_types_map:
+    if c_str and c_str in custom_types_map:
         return custom_types_map[c_str]
-    if n_str in custom_types_map:
+    if n_str and n_str in custom_types_map:
         return custom_types_map[n_str]
 
     # Fallback to default detection
