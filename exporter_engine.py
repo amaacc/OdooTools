@@ -509,18 +509,35 @@ def generate_report(
 
     today = datetime.now()
     date_filter = []
+    period_days = 365
     if sales_period == "last_30_days":
         date_filter.append(['date', '>=', (today - timedelta(days=30)).strftime('%Y-%m-%d 00:00:00')])
+        period_days = 30
     elif sales_period == "last_60_days":
         date_filter.append(['date', '>=', (today - timedelta(days=60)).strftime('%Y-%m-%d 00:00:00')])
+        period_days = 60
     elif sales_period == "last_90_days":
         date_filter.append(['date', '>=', (today - timedelta(days=90)).strftime('%Y-%m-%d 00:00:00')])
+        period_days = 90
     elif sales_period == "this_year":
         date_filter.append(['date', '>=', f"{today.year}-01-01 00:00:00"])
+        period_days = max(1, (today - datetime(today.year, 1, 1)).days)
     elif sales_period == "custom" and custom_date_from:
         date_filter.append(['date', '>=', f"{custom_date_from} 00:00:00"])
         if custom_date_to:
             date_filter.append(['date', '<=', f"{custom_date_to} 23:59:59"])
+            try:
+                d1 = datetime.strptime(custom_date_from, "%Y-%m-%d")
+                d2 = datetime.strptime(custom_date_to, "%Y-%m-%d")
+                period_days = max(1, (d2 - d1).days + 1)
+            except Exception:
+                period_days = 30
+        else:
+            try:
+                d1 = datetime.strptime(custom_date_from, "%Y-%m-%d")
+                period_days = max(1, (today - d1).days + 1)
+            except Exception:
+                period_days = 30
 
     def _fetch_pos_sales_for(s):
         models_t = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
@@ -639,17 +656,21 @@ def generate_report(
         # Calculate analytics values
         analysis_oh = sh_oh_total if column_options.get('showrooms', True) else qty_oh
         analysis_sl = sh_sl_total if column_options.get('showrooms', True) else total_sold
-        monthly_sales = analysis_sl / 12.0
+        monthly_sales = (analysis_sl / (period_days / 30.0)) if period_days > 0 else (analysis_sl / 12.0)
+        daily_sales = (analysis_sl / float(period_days)) if period_days > 0 else 0.0
+        margin_val = round(((price_val - cost_val) / price_val), 4) if price_val > 0 else 0.0
 
         if analysis_oh <= 0:
+            days_cover = 0
             if analysis_sl > 0:
                 item_status = "نفد المخزون"
             else:
                 item_status = "غير متوفر"
         elif analysis_sl <= 0:
+            days_cover = 999
             item_status = "راكد"
         else:
-            days_cover = (analysis_oh / analysis_sl) * 365.0
+            days_cover = round(analysis_oh / daily_sales) if daily_sales > 0 else 999
             if days_cover <= 20 or (analysis_oh <= 5 and analysis_sl >= 10):
                 item_status = "قارب على النفاذ"
             elif days_cover <= 60 or monthly_sales >= 15:
@@ -687,6 +708,8 @@ def generate_report(
                 row["Cost"] = cost_val
             if permissions.get("Sales Price", True):
                 row["Sales Price"] = price_val
+            if permissions.get("هامش الربح (%)", True):
+                row["هامش الربح (%)"] = margin_val
             if permissions.get("Shati Price", True):
                 row["Shati Price"] = shati_val
             if permissions.get("SO Price", True):
@@ -725,13 +748,27 @@ def generate_report(
 
         # ── Smart Inventory Analytics & Supply Chain Suggestions ────────────
         if column_options.get('analytics', True):
+            if permissions.get("أيام التغطية", True):
+                row["أيام التغطية"] = days_cover
+
             if permissions.get("حالة الصنف", True):
                 row["حالة الصنف"] = item_status
 
+            target_60d = monthly_sales * 2.0
+            suggested_60d_qty = max(0.0, round(target_60d - analysis_oh))
+
             if permissions.get("الطلب المقترح (60 يوم)", True):
-                target_60d = monthly_sales * 2.0
-                suggested_60d_qty = max(0.0, round(target_60d - analysis_oh))
                 row["الطلب المقترح (60 يوم)"] = suggested_60d_qty
+
+            if permissions.get("قيمة الطلب المقترح", True):
+                if v_info.get('vendor_discounted_price') and float(v_info['vendor_discounted_price']) > 0:
+                    buy_p = float(v_info['vendor_discounted_price'])
+                elif v_info.get('vendor_price') and float(v_info['vendor_price']) > 0:
+                    buy_p = float(v_info['vendor_price'])
+                else:
+                    buy_p = float(cost_val)
+                suggested_val = round(suggested_60d_qty * buy_p, 2)
+                row["قيمة الطلب المقترح"] = suggested_val
 
             if permissions.get("توصيات المناقلة", True) and column_options.get('showrooms', True) and target_showrooms:
                 transfer_recs = []
@@ -854,6 +891,9 @@ def generate_report(
         "Sales Price": {
             "header": "Price", "align": ALIGN_RT, "num_format": "#,##0.00", "total_type": None, "width_mode": "auto"
         },
+        "هامش الربح (%)": {
+            "header": "Margin\n(%)", "align": ALIGN_CTR, "num_format": "0.0%", "total_type": None, "width_mode": "auto"
+        },
         "Shati Price": {
             "header": "Shati P", "align": ALIGN_RT, "num_format": "#,##0.00", "total_type": None, "width_mode": "auto"
         },
@@ -899,11 +939,17 @@ def generate_report(
         "إجمالي مبيعات المعارض": {
             "header": "إجمالي مبيعات\nالمعارض", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
         },
+        "أيام التغطية": {
+            "header": "أيام التغطية\n(DOI)", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": None, "width_mode": "auto"
+        },
         "حالة الصنف": {
             "header": "حالة الصنف", "align": ALIGN_CTR, "num_format": "@", "total_type": None, "width_mode": "auto"
         },
         "الطلب المقترح (60 يوم)": {
             "header": "الطلب المقترح\n(60 يوم)", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
+        },
+        "قيمة الطلب المقترح": {
+            "header": "قيمة الطلب\nالمقترح (ريال)", "align": ALIGN_RT, "num_format": "#,##0.00", "total_type": "sum", "width_mode": "auto"
         },
         "توصيات المناقلة": {
             "header": "توصيات\nالمناقلة", "align": ALIGN_CTR, "num_format": "@", "total_type": None, "width_mode": "data_len_capped"
@@ -928,7 +974,7 @@ def generate_report(
 
     SH_OH_SUFFIX = " / On Hand"
     SH_SL_SUFFIX = " / Sold"
-    SUMMARY_COLS = ["إجمالي رصيد المعارض", "إجمالي مبيعات المعارض", "حالة الصنف", "الطلب المقترح (60 يوم)", "توصيات المناقلة"]
+    SUMMARY_COLS = ["إجمالي رصيد المعارض", "إجمالي مبيعات المعارض", "أيام التغطية", "حالة الصنف", "الطلب المقترح (60 يوم)", "قيمة الطلب المقترح", "توصيات المناقلة"]
 
     fixed_col_keys = [k for k in all_col_keys
                       if not k.endswith(SH_OH_SUFFIX) and not k.endswith(SH_SL_SUFFIX)
@@ -1035,8 +1081,14 @@ def generate_report(
         elif "مبيعات" in k:
             label_top = "إجمالي مبيعات\nالمعارض"
             col_w = 14
+        elif "تغطية" in k or "أيام" in k:
+            label_top = "أيام التغطية\n(DOI)"
+            col_w = 12
         elif "حالة" in k:
             label_top = "حالة الصنف"
+            col_w = 15
+        elif "قيمة" in k:
+            label_top = "قيمة الطلب\nالمقترح (ريال)"
             col_w = 15
         elif "مقترح" in k:
             label_top = "الطلب المقترح\n(60 يوم)"
@@ -1173,7 +1225,7 @@ def generate_report(
             spec = COLUMN_SPECS.get(k, {})
             ttype = spec.get("total_type")
 
-            if k.endswith(SH_OH_SUFFIX) or k.endswith(SH_SL_SUFFIX) or k in {"إجمالي رصيد المعارض", "إجمالي مبيعات المعارض", "الطلب المقترح (60 يوم)"}:
+            if k.endswith(SH_OH_SUFFIX) or k.endswith(SH_SL_SUFFIX) or k in {"إجمالي رصيد المعارض", "إجمالي مبيعات المعارض", "الطلب المقترح (60 يوم)", "قيمة الطلب المقترح"}:
                 ttype = "sum"
 
             cell = ws.cell(row=totals_excel_row, column=ec)

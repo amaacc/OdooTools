@@ -824,13 +824,13 @@ class OdooReportApp(ctk.CTk):
 
         # Group fields visually
         groups = [
-            ("💰 الأسعار", ["Cost", "Sales Price", "Shati Price", "SO Price", "Pos Minimum Price"]),
+            ("💰 الأسعار", ["Cost", "Sales Price", "هامش الربح (%)", "Shati Price", "SO Price", "Pos Minimum Price"]),
             ("📦 المخزون والمبيعات الإجمالية", ["Quantity On Hand", "365d Sold"]),
             ("🏭 بيانات الموردين", ["Vendors", "Vendors/Price", "Vendors/Discount (%)",
                                    "Vendors/Discounted Price", "Vendors/Last Purchase",
                                    "Vendors/Last Updated on", "Last Received Qty"]),
             ("🏬 المعارض التفصيلية", ["Showrooms_OnHand", "Showrooms_Sold"]),
-            ("📈 تحليلات وتوصيات المخزون", ["حالة الصنف", "الطلب المقترح (60 يوم)", "توصيات المناقلة"]),
+            ("📈 تحليلات وتوصيات المخزون", ["أيام التغطية", "حالة الصنف", "الطلب المقترح (60 يوم)", "قيمة الطلب المقترح", "توصيات المناقلة"]),
         ]
 
         field_label_map = {f_id: f_label for f_id, f_label in ALL_PROTECTED_FIELDS}

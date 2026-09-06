@@ -10,6 +10,7 @@ _MASTER_PASS = "KHATIB@MASTER#2026"
 ALL_PROTECTED_FIELDS = [
     ("Cost", "سعر التكلفة (Cost)"),
     ("Sales Price", "سعر البيع (Sales Price)"),
+    ("هامش الربح (%)", "نسبة هامش الربح (Gross Margin %)"),
     ("Shati Price", "سعر الشاطئ (Shati Price)"),
     ("SO Price", "سعر أمر البيع (SO Price)"),
     ("Pos Minimum Price", "الحد الأدنى لسعر الكاشير (POS Min Price)"),
@@ -24,8 +25,10 @@ ALL_PROTECTED_FIELDS = [
     ("Last Received Qty", "الكمية المستلمة في آخر شراء (Last Received Qty)"),
     ("Showrooms_OnHand", "أرصدة المعارض التفصيلية (Showrooms On Hand)"),
     ("Showrooms_Sold", "مبيعات المعارض التفصيلية (Showrooms Sold)"),
+    ("أيام التغطية", "أيام تغطية المخزون (Days of Inventory)"),
     ("حالة الصنف", "حالة الصنف (Item Status)"),
     ("الطلب المقترح (60 يوم)", "الطلب المقترح 60 يوم (Suggested Order)"),
+    ("قيمة الطلب المقترح", "قيمة الطلب المقترح بالريال (Suggested Order Value)"),
     ("توصيات المناقلة", "توصيات المناقلة بين المعارض (Transfer Recs)")
 ]
 
