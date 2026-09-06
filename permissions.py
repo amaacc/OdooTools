@@ -14,7 +14,7 @@ ALL_PROTECTED_FIELDS = [
     ("SO Price", "سعر أمر البيع (SO Price)"),
     ("Pos Minimum Price", "الحد الأدنى لسعر الكاشير (POS Min Price)"),
     ("Quantity On Hand", "إجمالي رصيد المخزون (Quantity On Hand)"),
-    ("Sold", "إجمالي المبيعات العامة (Sold)"),
+    ("365d Sold", "إجمالي مبيعات 365 يوم (365d Sold)"),
     ("Vendors", "اسم المورد (Vendors)"),
     ("Vendors/Price", "سعر المورد (Vendors/Price)"),
     ("Vendors/Discount (%)", "نسبة خصم المورد (Vendors/Discount)"),
@@ -54,6 +54,8 @@ def load_permissions():
         decrypted = cipher.decrypt(encrypted_data)
         data = json.loads(decrypted.decode("utf-8"))
         perms = data.get("permissions", get_default_permissions())
+        if "Sold" in perms and "365d Sold" not in perms:
+            perms["365d Sold"] = perms["Sold"]
         admin_hash = data.get("admin_hash", _DEFAULT_ADMIN_HASH)
         return perms, admin_hash
     except Exception:

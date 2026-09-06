@@ -825,7 +825,7 @@ class OdooReportApp(ctk.CTk):
         # Group fields visually
         groups = [
             ("💰 الأسعار", ["Cost", "Sales Price", "Shati Price", "SO Price", "Pos Minimum Price"]),
-            ("📦 المخزون والمبيعات الإجمالية", ["Quantity On Hand", "Sold"]),
+            ("📦 المخزون والمبيعات الإجمالية", ["Quantity On Hand", "365d Sold"]),
             ("🏭 بيانات الموردين", ["Vendors", "Vendors/Price", "Vendors/Discount (%)",
                                    "Vendors/Discounted Price", "Vendors/Last Purchase",
                                    "Vendors/Last Updated on", "Last Received Qty"]),

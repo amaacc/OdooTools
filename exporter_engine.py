@@ -697,8 +697,8 @@ def generate_report(
         if column_options.get('totals', True):
             if permissions.get("Quantity On Hand", True):
                 row["Quantity On Hand"] = qty_oh
-            if permissions.get("Sold", True):
-                row["Sold"] = total_sold
+            if permissions.get("365d Sold", True) or permissions.get("Sold", True):
+                row["365d Sold"] = total_sold
 
         if column_options.get('vendors', True):
             if permissions.get("Vendors", True):
@@ -866,8 +866,11 @@ def generate_report(
         "Quantity On Hand": {
             "header": "Quantity On Hand", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
         },
+        "365d Sold": {
+            "header": "365d Sold", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
+        },
         "Sold": {
-            "header": "Sold", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
+            "header": "365d Sold", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
         },
         "Vendors": {
             "header": "Vendor", "align": ALIGN_LT, "num_format": "@", "total_type": None, "width_mode": "data_len_capped"
