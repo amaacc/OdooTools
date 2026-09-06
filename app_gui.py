@@ -562,6 +562,18 @@ class OdooReportApp(ctk.CTk):
             ctk.CTkCheckBox(sidebar, text=label, variable=var,
                             font=ctk.CTkFont(APP_FONT, 11)).pack(anchor="e", padx=18, pady=2)
 
+        sep_guide = ctk.CTkFrame(sidebar, height=1, fg_color=("gray80", "#334155"))
+        sep_guide.pack(fill="x", padx=12, pady=8)
+
+        # ── Documentation / Guide sheet ──────────────────
+        ctk.CTkLabel(sidebar, text="📖 توثيق ودليل التقرير",
+                     font=ctk.CTkFont(APP_FONT, 11, "bold"),
+                     text_color=BRAND_SLATE).pack(anchor="e", padx=12, pady=(0, 4))
+
+        self._include_guide = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(sidebar, text="تضمين دليل الحسابات في Excel", variable=self._include_guide,
+                        font=ctk.CTkFont(APP_FONT, 11)).pack(anchor="e", padx=18, pady=2)
+
         sep3 = ctk.CTkFrame(sidebar, height=1, fg_color=("gray80", "#334155"))
         sep3.pack(fill="x", padx=12, pady=10)
 
@@ -1180,6 +1192,7 @@ class OdooReportApp(ctk.CTk):
                     filter_name=f_name,
                     filter_tags=f_tags,
                     output_path=out_path,
+                    include_methodology_guide=self._include_guide.get(),
                     progress_callback=_cb,
                     is_cancelled=lambda: self._cancel_flag
                 )

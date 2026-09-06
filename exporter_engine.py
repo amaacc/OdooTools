@@ -130,6 +130,197 @@ def get_all_product_tags():
     return [{'id': t['id'], 'name': t['name']} for t in tags if t.get('name')]
 
 
+def _build_methodology_sheet(wb):
+    """
+    Builds a beautifully formatted RTL documentation sheet:
+    '📘 دليل ومنهجية الحسابات'
+    Explaining calculation formulas, logic, Odoo data sources, and practical guidance.
+    """
+    ws = wb.create_sheet(title="📘 دليل ومنهجية الحسابات")
+    ws.views.sheetView[0].rightToLeft = True
+
+    C_HDR_MAIN    = "1F4E79"   # Dark Navy
+    C_HDR_SUB     = "2E75B6"   # Soft Blue
+    C_BG_LIGHT    = "F8FAFC"
+    C_BG_ALT      = "F1F5F9"
+    C_BORDER      = "CBD5E1"
+    C_TEXT_DARK   = "0F172A"
+    C_TEXT_MUTED  = "475569"
+    C_NOTE_BG     = "EFF6FF"
+    C_NOTE_BORDER = "3B82F6"
+
+    fill_title = PatternFill("solid", fgColor=C_HDR_MAIN)
+    fill_desc  = PatternFill("solid", fgColor=C_BG_LIGHT)
+    fill_th    = PatternFill("solid", fgColor=C_HDR_SUB)
+    fill_alt   = PatternFill("solid", fgColor=C_BG_ALT)
+    fill_white = PatternFill("solid", fgColor="FFFFFF")
+    fill_note  = PatternFill("solid", fgColor=C_NOTE_BG)
+
+    font_title = Font(name="Segoe UI", size=13, bold=True, color="FFFFFF")
+    font_desc  = Font(name="Segoe UI", size=9.5, color=C_TEXT_MUTED)
+    font_th    = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
+    font_field = Font(name="Segoe UI", size=9.5, bold=True, color="1E3A8A")
+    font_dept  = Font(name="Segoe UI", size=9, bold=True, color="0F766E")
+    font_body  = Font(name="Segoe UI", size=9, color=C_TEXT_DARK)
+    font_code  = Font(name="Consolas", size=8.5, color="7C2D12")
+    font_note  = Font(name="Segoe UI", size=9.5, bold=True, color="1E40AF")
+
+    s_border = Side(style="thin", color=C_BORDER)
+    border_cell = Border(left=s_border, right=s_border, top=s_border, bottom=s_border)
+    s_note = Side(style="medium", color=C_NOTE_BORDER)
+    border_note = Border(left=s_note, right=s_note, top=s_note, bottom=s_note)
+
+    align_center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    align_right  = Alignment(horizontal="right",  vertical="center", wrap_text=True)
+
+    # 1. Title Banner (Row 2)
+    ws.merge_cells("A2:E2")
+    c_title = ws.cell(row=2, column=1, value="📘 دليل ومنهجية الحسابات والمعايير التحليلية للتقرير")
+    c_title.font = font_title
+    c_title.fill = fill_title
+    c_title.alignment = align_center
+    ws.row_dimensions[2].height = 36
+
+    # 2. Subtitle / Description (Row 3)
+    ws.merge_cells("A3:E3")
+    c_desc = ws.cell(row=3, column=1, value="يوضح هذا الدليل الأسس والمعادلات الرياضية لجميع مؤشرات وأعمدة التقرير، ومصادر بياناتها من نظام Odoo، مع توجيهات تنفيذية لكيفية استثمارها في قرارات المشتريات والمبيعات والمخزون.")
+    c_desc.font = font_desc
+    c_desc.fill = fill_desc
+    c_desc.alignment = align_center
+    ws.row_dimensions[3].height = 26
+
+    # 3. Table Headers (Row 5)
+    headers = [
+        ("المعيار / الحقل في التقرير", 26),
+        ("القسم المعني", 20),
+        ("المعادلة وآلية الحساب", 44),
+        ("مصدر البيانات في Odoo", 30),
+        ("دلالة المؤشر والتوجيه التنفيذي", 52),
+    ]
+
+    for col_idx, (hdr_text, width) in enumerate(headers, 1):
+        cell = ws.cell(row=5, column=col_idx, value=hdr_text)
+        cell.font = font_th
+        cell.fill = fill_th
+        cell.alignment = align_center
+        cell.border = border_cell
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+    ws.row_dimensions[5].height = 28
+
+    # 4. Data Rows (10 Topics)
+    data = [
+        (
+            "نسبة هامش الربح\nMargin (%)",
+            "المشتريات والمالية",
+            "((سعر البيع - سعر التكلفة) / سعر البيع) × 100\nتُحسب بالمعادلة المباشرة وتُنسق كنسبة مئوية بدقة 0.0%",
+            "product.product:\n• list_price (سعر البيع)\n• standard_price (سعر التكلفة)",
+            "يقيس صافي ربحية الصنف. يفيد المشتريات في مراجعة أسعار الشراء مع الموردين، ويفيد المبيعات في تجنب تقديم خصومات تخفض الهامش عن الحد الأدنى المستهدف للربحية."
+        ),
+        (
+            "أيام التغطية\nDays of Inventory (DOI)",
+            "المخزون والمشتريات",
+            "إجمالي الرصيد القابل للبيع ÷ معدل المبيعات اليومية (365d Sold ÷ 365).\n• إذا كان الرصيد = 0 يُعرض (0).\n• إذا توفر مخزون دون مبيعات يُعرض (999) كدلالة على الركود.",
+            "• stock.quant (المخزون المتوفر)\n• pos.order.line (مبيعات السنة)",
+            "يقيس عدد الأيام التي يكفيها الرصيد الحالي:\n• أقل من 30 يوماً: خطر نفاد وشيك يتطلب الشراء الفوري.\n• 30 إلى 90 يوماً: مخزون مثالي ومتوازن.\n• أكثر من 120 يوماً: تضخم مخزون وركود يستوجب التخفيض أو المناقلة."
+        ),
+        (
+            "حالة الصنف\nMovement Status",
+            "المشتريات والمبيعات والمستودعات",
+            "تصنيف ديناميكي بناءً على الرصيد ومعدل الحركة وأيام التغطية:\n• نفاذ مخزون (Out of Stock): رصيد 0 مع حركة سابقة.\n• قاربت على النفاذ (Low Stock): رصيد متوفر وتغطية ≤ 30 يوم.\n• راكد (Stagnant): مخزون بلا مبيعات أو تغطية ≥ 180 يوم.\n• سريع الحركة (Fast Moving): مبيعات عالية وتغطية منتظمة.\n• فائض (Surplus): تغطية > 120 يوم.\n• متوازن (Balanced): تغطية بين 30 و 120 يوم.",
+            "مؤشر مركب من:\n• stock.quant\n• pos.order.line\n• DOI المحسوب",
+            "يوفر توجيهاً فورياً لفرق العمل:\n• الأصناف النافذة أو القاربة على النفاذ: أولوية قصوى للمشتريات.\n• الأصناف الراكدة والفائضة: إيقاف الشراء فوراً وتنشيط العروض الترويجية أو نقلها لفروع أكثر حركة لتفادي تجميد السيولة."
+        ),
+        (
+            "تصنيف باريتو\nPareto (ABC)",
+            "الإدارة العليا والمشتريات",
+            "تطبيق قانون باريتو (80/15/5) على الإيرادات البيعية الإجمالية (365d Sold × Price):\n• الفئة (A): الأصناف الذهبية التي تمثل أول 80% من إجمالي الإيرادات.\n• الفئة (B): الأصناف التي تمثل الـ 15% التالية (80% إلى 95%).\n• الفئة (C): الأصناف التي تمثل آخر 5% من الإيرادات أو صفرية المبيعات.",
+            "تحليل تراكمي للمبيعات:\n• pos.order.line\n• product.template.list_price",
+            "توجيه التركيز الإداري والاستثماري:\n• فئة A: متابعة يومية وشراء مستمر؛ انقطاعها يعني فقدان معظم المبيعات.\n• فئة B: مراجعة دورية منتظمة.\n• فئة C: تقنين الشراء والرقابة الصارمة لتجنب تجميد رأس المال في أصناف هامشية."
+        ),
+        (
+            "الطلب المقترح (60 يوم)\nSuggested PO (60d)",
+            "قسم المشتريات والتخطيط",
+            "الاحتياج المتوقع لـ 60 يوماً مطروحاً منه الرصيد الحالي والبضاعة بالطريق:\nMAX(0, (معدل البيع اليومي × 60) - (المخزون المتوفر + Incoming))\nالنتيجة تكون (0) في حال كان المخزون كافياً لـ 60 يوماً.",
+            "• pos.order.line (المبيعات)\n• stock.quant (المخزون المتوفر)\n• purchase.order.line (بضاعة بالطريق Incoming)",
+            "توصية توريد آلية علمية تكفي استهلاك شهرين قادمين، وتمنع كلاً من نفاد البضائع أو تكدسها فوق الحاجة التشغيلية."
+        ),
+        (
+            "قيمة الطلب المقترح\nSuggested PO Value",
+            "المشتريات والمالية وإدارة الميزانية",
+            "الطلب المقترح (60 يوم) × سعر الشراء الصافي من المورد (Vendor Price).\nيحتوي التقرير على معادلة جمع تلقائي =SUM في صف الإجمالي لمعرفة التكلفة الإجمالية للطلبية.",
+            "• كمية الطلب المقترح المحسوبة\n• purchase.order.line (آخر سعر شراء)\n• product.supplierinfo",
+            "تقدير دقيق لحجم السيولة النقدية والميزانية المطلوبة لإصدار أوامر التوريد للمورد، مما يسهل التخطيط المالي وتوزيع الاعتمادات المالية."
+        ),
+        (
+            "توصيات المناقلة الذكية\nShowroom Transfers",
+            "إدارة التوزيع وسلاسل الإمداد",
+            "خوارزمية ذكية تقارن رصيد ومبيعات كل معرض:\n• إذا كان لدى فرع رصيد فائض (تغطية > 60 يوم) وفرع آخر لديه عجز (رصيد = 0 أو تغطية < 15 يوم وله مبيعات).\n• تُحسب الكمية بدقة وتُعرض بصيغة: من [الفرع] ([الكمية]) إلى [الفرع].",
+            "تحليل تفصيلي لمواقع المعارض:\n• stock.location\n• stock.quant\n• pos.order.line لكل معرض",
+            "استغلال المخزون الحالي بالكامل بين المعارض دون الحاجة لشراء بضاعة إضافية، وتلبية طلبات العملاء في الفروع المتعطشة عبر النقل الداخلي السريع."
+        ),
+        (
+            "تصنيف المعارض وفروع العناية\nShowrooms & Care Branches",
+            "إدارة العمليات والمبيعات",
+            "تقسيم منافذ البيع إلى نوعين رئيسيين:\n1. معارض بيع عادية (Showrooms).\n2. مراكز وفروع عناية (Care Branches) مثل: الصفاء، الطائف، الحمدانية، سوق الشاطئ.\nتتميز فروع العناية بلون فيروزي فاتح مميز في رؤوس الأعمدة والملخصات.",
+            "ملف تهيئة المعارض الداخلي:\n• showroom_config.json\nمع إمكانية تعديل نوع أي فرع من شاشة الإعدادات بالبرنامج.",
+            "تسهيل التمييز البصري الفوري ومقارنة حجم حركة البضائع بين معارض التجزئة ومراكز العناية، وتخصيص سياسات التوزيع حسب طبيعة الفرع."
+        ),
+        (
+            "مستويات الأسعار وخصم المورد\nPricing Tiers & Vendor Discounts",
+            "المبيعات والمشتريات وإدارة التسعير",
+            "تتبع دورة التسعير الكاملة للصنف:\n• سعر المورد الأساسي (Vendor Price).\n• سعر الشراء المخفض بعد الخصم الممنوح (Discounted Price).\n• سعر بيع التجزئة (Sales Price).\n• سعر الجملة وسعر التكلفة.",
+            "• purchase.order.line (سعر وخصم أمر الشراء الأخير)\n• product.supplierinfo (قائمة أسعار الموردين)\n• product.template",
+            "مراقبة التزام الموردين بنسب الخصومات المتفق عليها، وضمان الحفاظ على هامش ربح آمن عند تطبيق أسعار الجملة أو الخصومات الترويجية."
+        ),
+        (
+            "مطابقة مخزون المعارض والمستودع\nPOS vs Warehouse Stock",
+            "إدارة الجرد والمستودعات والرقابة",
+            "مقارنة الرصيد المتوفر في صالات المعارض (إجمالي رصيد المعارض) مع الرصيد الكلي العام للشركة (Quantity On Hand).\nالفرق بينهما يمثل المخزون المتواجد في المستودع المركزي أو بضائع تحت الفحص والاستلام.",
+            "• stock.quant المربوطة بمواقع نقاط البيع (POS Locations)\n• إجمالي رصيد الشركة الكلي (Company On Hand)",
+            "كشف أي تكدس للبضائع في المستودعات المركزية دون توزيعها على المعارض، وسرعة اكتشاف الفروقات الجردية بين النظام والواقع الفعلي."
+        ),
+    ]
+
+    for r_idx, row_data in enumerate(data, 6):
+        row_fill = fill_white if r_idx % 2 == 0 else fill_alt
+        field_text, dept_text, formula_text, source_text, guide_text = row_data
+
+        cells = [
+            (1, field_text, font_field, align_center),
+            (2, dept_text, font_dept, align_center),
+            (3, formula_text, font_body, align_right),
+            (4, source_text, font_code, align_right),
+            (5, guide_text, font_body, align_right),
+        ]
+
+        for c_idx, val, c_font, c_align in cells:
+            cell = ws.cell(row=r_idx, column=c_idx, value=val)
+            cell.font = c_font
+            cell.fill = row_fill
+            cell.alignment = c_align
+            cell.border = border_cell
+
+        lines_count = max(
+            field_text.count("\n") + 1,
+            formula_text.count("\n") + 1,
+            source_text.count("\n") + 1,
+            guide_text.count("\n") + 1 + len(guide_text) // 45
+        )
+        ws.row_dimensions[r_idx].height = max(52, lines_count * 18)
+
+    # 5. Bottom Note Card
+    note_row = len(data) + 7
+    ws.merge_cells(start_row=note_row, start_column=1, end_row=note_row, end_column=5)
+    c_note = ws.cell(row=note_row, column=1, value="💡 ملاحظة إدارية: يتم احتساب وتحديث كافة هذه المؤشرات والمعادلات لحظياً ومباشرة من قاعدة بيانات Odoo أثناء التصدير لتقديم أدق صورة واقعية تدعم اتخاذ قرارات الشراء والتوزيع الفورية.")
+    c_note.font = font_note
+    c_note.fill = fill_note
+    c_note.alignment = align_right
+    c_note.border = border_note
+    ws.row_dimensions[note_row].height = 32
+
+    ws.freeze_panes = "A6"
+
+
 def generate_report(
     filter_internal_ref=None,
     filter_barcode=None,
@@ -142,6 +333,7 @@ def generate_report(
     movement_filter="all",
     column_options=None,
     output_path=None,
+    include_methodology_guide=False,
     progress_callback=None,
     cancel_check_callback=None,
     is_cancelled=None,
@@ -1374,6 +1566,11 @@ def generate_report(
         col_w2 = [14, 28, 16, 20, 26, 26, 20]
         for c_i, w in enumerate(col_w2, 1):
             ws2.column_dimensions[get_column_letter(c_i)].width = w
+
+    if include_methodology_guide:
+        notify(97, "جاري إعداد دليل ومنهجية الحسابات...")
+        chk()
+        _build_methodology_sheet(wb)
 
     notify(98, "جاري حفظ ملف Excel النهائي...")
     chk()
