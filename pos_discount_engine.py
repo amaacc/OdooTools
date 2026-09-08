@@ -158,12 +158,21 @@ def generate_pos_discount_report(
         p_dom = [['sale_ok', '=', True]]
 
         # Tags filter
-        if filter_tags:
+        if isinstance(filter_tags, (list, tuple)):
+            tg_tokens = [str(t).strip() for t in filter_tags if str(t).strip()]
+        else:
+            tg_tokens = parse_tokens(filter_tags)
+
+        if tg_tokens:
             all_tags_list = get_all_product_tags()
-            tag_name_map = {t['name'].strip().lower(): t['id'] for t in all_tags_list}
-            matched_tag_ids = [tag_name_map[t.strip().lower()] for t in filter_tags if t.strip().lower() in tag_name_map]
-            if matched_tag_ids:
-                p_dom.append(['product_tag_ids', 'in', matched_tag_ids])
+            matched_tag_ids = [
+                t['id'] for t in all_tags_list
+                if match_wildcards(t['name'].strip(), tg_tokens) or match_wildcards(t['name'], tg_tokens)
+            ]
+            if not matched_tag_ids:
+                notify(100, f"لم يتم العثور على أي وسوم تطابق: {filter_tags}")
+                raise ValueError(f"لم يتم العثور على أي وسوم تطابق: '{filter_tags}'. يرجى التأكد من اسم الوسم.")
+            p_dom.append(['product_tag_ids', 'in', matched_tag_ids])
 
         # Query products
         p_fields = ['id', 'default_code', 'barcode', 'name']
@@ -203,7 +212,7 @@ def generate_pos_discount_report(
         line_domain.append(['order_id.config_id', 'in', selected_config_ids])
 
     if matched_product_ids is not None:
-        if len(matched_product_ids) <= 3000:
+        if len(matched_product_ids) <= 10000:
             line_domain.append(['product_id', 'in', matched_product_ids])
 
     notify(10, "جاري احتساب إجمالي حركات المبيعات المخصومة في نقاط البيع...")
@@ -242,19 +251,14 @@ def generate_pos_discount_report(
             pct = 15 + int(35 * (completed_chunks / len(chunks)))
             notify(pct, f"تم استخراج {len(all_lines):,} من أصل {total_lines:,} حركة مخصومة...")
 
-    # If matched_product_ids was too large to put in domain, filter in memory now
-    if matched_product_ids is not None and len(matched_product_ids) > 3000:
+    # Ensure lines are strictly filtered by matched_product_ids
+    if matched_product_ids is not None:
         p_set = set(matched_product_ids)
         all_lines = [l for l in all_lines if l.get('product_id') and l['product_id'][0] in p_set]
 
     if not all_lines:
         notify(100, "لم تطابق أي حركة مخصومة فلاتر الأصناف المحددة.")
-        return {
-            'success': True,
-            'output_path': None,
-            'total_records': 0,
-            'total_time': round(time.time() - t_start, 2)
-        }
+        raise ValueError("لم يتم العثور على أي حركات مبيعات تحتوي على خصومات للأصناف المحددة.")
 
     notify(55, f"اكتمل جلب السطور ({len(all_lines):,} حركة). جاري استرجاع بيانات الفواتير والمنتجات...")
     chk()
@@ -302,8 +306,13 @@ def generate_pos_discount_report(
     # PHASE 4 — Vectorized In-Memory Row Construction
     # ═════════════════════════════════════════════════════════════════════════
     report_rows = []
+    matched_pids_set = set(matched_product_ids) if matched_product_ids is not None else None
 
     for line in all_lines:
+        if matched_pids_set is not None:
+            pid = line['product_id'][0] if line.get('product_id') else None
+            if pid not in matched_pids_set:
+                continue
         order = orders_map.get(line['order_id'][0], {})
         product = products_map.get(line['product_id'][0], {})
 
