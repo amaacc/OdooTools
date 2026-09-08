@@ -1,9 +1,9 @@
 """
-OdooReportExporter – Main GUI (v1.02)
+OdooReportExporter – Main GUI (v1.03)
 Designed & developed by: عبدالله الخطيب (Abdullah Al-Khatib)
 """
 
-APP_VERSION = "v1.02"
+APP_VERSION = "v1.03"
 
 import os
 import sys
@@ -314,6 +314,7 @@ class OdooReportApp(ctk.CTk):
         self.showroom_vars = {}
         self.is_exporting = False
         self.last_exported_file = None
+        self.last_exported_pdf = None
         self._cancel_flag = False
 
         if not is_activated():
@@ -489,11 +490,18 @@ class OdooReportApp(ctk.CTk):
                                        command=self._change_theme)
         theme_menu.pack(side="left", padx=(0, 8))
 
+        # Company Profile & Logo button
+        ctk.CTkButton(ctrl_frame, text="🏢  بيانات وشعار الشركة",
+                      font=ctk.CTkFont(APP_FONT, 11, "bold"),
+                      fg_color=BRAND_BLUE, hover_color=BRAND_BLUE_HOVER,
+                      width=140, height=30,
+                      command=self._open_company_profile_dialog).pack(side="left", padx=(0, 8))
+
         # Admin permissions button
         ctk.CTkButton(ctrl_frame, text="🔒  الصلاحيات الإدارية",
                       font=ctk.CTkFont(APP_FONT, 11, "bold"),
                       fg_color=BRAND_PURPLE, hover_color=BRAND_PURPLE_HOVER,
-                      width=148, height=30,
+                      width=140, height=30,
                       command=self._open_admin_dialog).pack(side="left")
 
         # Center: App title
@@ -649,7 +657,22 @@ class OdooReportApp(ctk.CTk):
         ctk.CTkCheckBox(self._pos_options_frame, text="🛍️  إظهار كل مبيعات الصنف (مع وبدون خصم)",
                         variable=self._pos_all_sales,
                         font=ctk.CTkFont(APP_FONT, 11),
-                        command=self._on_pos_options_change).pack(anchor="e", padx=16, pady=(4, 2))
+                        command=self._on_pos_options_change).pack(anchor="e", padx=16, pady=4)
+
+        self._pos_include_pro_sheets = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(self._pos_options_frame, text="📊  لوحة المؤشرات وملخص الأصناف وكشف المطالبة",
+                        variable=self._pos_include_pro_sheets,
+                        font=ctk.CTkFont(APP_FONT, 11)).pack(anchor="e", padx=16, pady=4)
+
+        self._pos_split_showrooms = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(self._pos_options_frame, text="📑  أوراق عمل مستقلة لكل معرض",
+                        variable=self._pos_split_showrooms,
+                        font=ctk.CTkFont(APP_FONT, 11)).pack(anchor="e", padx=16, pady=4)
+
+        self._pos_export_pdf = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(self._pos_options_frame, text="📄  تصدير كشف المطالبة كملف PDF معتمد",
+                        variable=self._pos_export_pdf,
+                        font=ctk.CTkFont(APP_FONT, 11)).pack(anchor="e", padx=16, pady=(4, 6))
 
     # ─── TABS ─────────────────────────────────────────────────
     def _build_tabs(self, parent):
@@ -827,10 +850,15 @@ class OdooReportApp(ctk.CTk):
                                             state="disabled", command=self._open_dir)
         self._btn_open_dir.pack(side="left", padx=4)
 
-        self._btn_open = ctk.CTkButton(btn_row, text="📄 فتح الملف", width=120, height=34,
+        self._btn_open = ctk.CTkButton(btn_row, text="📊 فتح الإكسيل", width=115, height=34,
                                         fg_color=BRAND_GREEN, hover_color=BRAND_GREEN_HOVER,
                                         state="disabled", command=self._open_file)
         self._btn_open.pack(side="left", padx=4)
+
+        self._btn_open_pdf = ctk.CTkButton(btn_row, text="📄 فتح كشف PDF", width=120, height=34,
+                                           fg_color="#059669", hover_color="#047857",
+                                           state="disabled", command=self._open_pdf)
+        self._btn_open_pdf.pack(side="left", padx=4)
 
         self._btn_cancel = ctk.CTkButton(btn_row, text="⏹ إلغاء", width=100, height=34,
                                           fg_color=BRAND_RED, hover_color=BRAND_RED_HOVER,
@@ -1168,6 +1196,108 @@ class OdooReportApp(ctk.CTk):
                       font=ctk.CTkFont(APP_FONT, 12, "bold"),
                       command=_save).pack(side="right", fill="x", expand=True, padx=(10, 0))
 
+    def _open_company_profile_dialog(self):
+        """Interactive modal to set official company profile metadata and company logo."""
+        from company_profile import load_company_profile, save_company_profile
+
+        profile = load_company_profile()
+
+        dlg = ctk.CTkToplevel(self)
+        dlg.title("🏢 إعدادات بيانات وشعار الشركة للمطبوعات الرسمية")
+        dlg.geometry("560x650")
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.lift()
+        dlg.focus_force()
+
+        # Header
+        hdr = ctk.CTkFrame(dlg, fg_color=(BRAND_BLUE, "#0F1E33"), height=60, corner_radius=0)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+
+        accent = ctk.CTkFrame(hdr, fg_color=BRAND_GOLD, width=6, corner_radius=0)
+        accent.pack(side="right", fill="y")
+
+        hdr_content = ctk.CTkFrame(hdr, fg_color="transparent")
+        hdr_content.pack(side="right", fill="both", expand=True, padx=14, pady=8)
+
+        ctk.CTkLabel(hdr_content, text="🏢  بيانات وشعار الشركة للمطبوعات الرسمية",
+                     font=ctk.CTkFont(APP_FONT, 14, "bold"), text_color="white").pack(anchor="e")
+        ctk.CTkLabel(hdr_content, text="تُستخدم هذه البيانات والشعار في ترويسة التقارير الرسمية وكشوف مطالبات الموردين وملفات PDF.",
+                     font=ctk.CTkFont(APP_FONT, 10), text_color="gray80").pack(anchor="e")
+
+        content = ctk.CTkFrame(dlg, fg_color="transparent")
+        content.pack(fill="both", expand=True, padx=20, pady=12)
+
+        entries = {}
+        fields_info = [
+            ("name_ar", "اسم الشركة (بالعربي):", profile.get("name_ar", "")),
+            ("name_en", "English Company Name:", profile.get("name_en", "")),
+            ("cr_number", "رقم السجل التجاري (C.R.):", profile.get("cr_number", "")),
+            ("tax_id", "الرقم الضريبي (VAT ID):", profile.get("tax_id", "")),
+            ("phone", "رقم الهاتف / الجوال:", profile.get("phone", "")),
+            ("email", "البريد الإلكتروني:", profile.get("email", "")),
+            ("address", "العنوان / المقر الرئيسي:", profile.get("address", "")),
+        ]
+
+        for key, lbl, default_val in fields_info:
+            f_frame = ctk.CTkFrame(content, fg_color="transparent")
+            f_frame.pack(fill="x", pady=2)
+            ctk.CTkLabel(f_frame, text=lbl, font=ctk.CTkFont(APP_FONT, 10, "bold"),
+                         text_color=BRAND_SLATE).pack(anchor="e")
+            entry = ctk.CTkEntry(f_frame, font=ctk.CTkFont(APP_FONT, 11), height=30)
+            entry.insert(0, default_val)
+            entry.pack(fill="x")
+            entries[key] = entry
+
+        # Logo path
+        logo_frame = ctk.CTkFrame(content, fg_color="transparent")
+        logo_frame.pack(fill="x", pady=(4, 2))
+        ctk.CTkLabel(logo_frame, text="شعار الشركة (صورة PNG / JPG):",
+                     font=ctk.CTkFont(APP_FONT, 10, "bold"), text_color=BRAND_SLATE).pack(anchor="e")
+        
+        logo_row = ctk.CTkFrame(logo_frame, fg_color="transparent")
+        logo_row.pack(fill="x")
+        
+        logo_entry = ctk.CTkEntry(logo_row, font=ctk.CTkFont(APP_FONT, 10), height=30)
+        logo_entry.insert(0, profile.get("logo_path", ""))
+        logo_entry.pack(side="right", fill="x", expand=True, padx=(4, 0))
+        entries["logo_path"] = logo_entry
+
+        def _pick_logo():
+            f = filedialog.askopenfilename(
+                title="اختيار شعار الشركة",
+                filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.bmp")]
+            )
+            if f:
+                logo_entry.delete(0, "end")
+                logo_entry.insert(0, f)
+
+        ctk.CTkButton(logo_row, text="🖼️  استعراض...", width=100, height=30,
+                      fg_color=BRAND_SLATE, hover_color=BRAND_SLATE_HOVER,
+                      command=_pick_logo).pack(side="left")
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(dlg, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=20, pady=(6, 14))
+
+        def _save():
+            new_data = {k: e.get().strip() for k, e in entries.items()}
+            if save_company_profile(new_data):
+                messagebox.showinfo("تم الحفظ", "🎉 تم حفظ بيانات وشعار الشركة بنجاح! سيتم استخدامها في كافة التقارير والمطبوعات الرسمية.")
+                dlg.destroy()
+            else:
+                messagebox.showerror("خطأ", "فشل حفظ بيانات الشركة.")
+
+        ctk.CTkButton(btn_frame, text="💾  حفظ بيانات الشركة", font=ctk.CTkFont(APP_FONT, 12, "bold"),
+                      fg_color=BRAND_BLUE, hover_color=BRAND_BLUE_HOVER, height=36,
+                      command=_save).pack(side="right", fill="x", expand=True, padx=(8, 0))
+
+        ctk.CTkButton(btn_frame, text="إلغاء", font=ctk.CTkFont(APP_FONT, 11),
+                      fg_color=BRAND_SLATE, hover_color=BRAND_SLATE_HOVER, height=36, width=90,
+                      command=dlg.destroy).pack(side="left")
+
     def _load_showrooms_async(self):
         def _worker():
             try:
@@ -1312,11 +1442,15 @@ class OdooReportApp(ctk.CTk):
                         filter_tags=f_tags,
                         include_showroom_col=self._pos_include_showroom.get(),
                         include_all_sales=self._pos_all_sales.get(),
+                        include_pro_sheets=self._pos_include_pro_sheets.get(),
+                        include_showroom_sheets=self._pos_split_showrooms.get(),
+                        export_claim_pdf=self._pos_export_pdf.get(),
                         output_path=out_path,
                         progress_callback=_cb,
                         is_cancelled=lambda: self._cancel_flag
                     )
                     self.last_exported_file = res['output_path']
+                    self.last_exported_pdf = res.get('pdf_path')
                     self.after(0, lambda: self._on_success(res))
                 except InterruptedError:
                     self.after(0, lambda: self._on_cancelled())
@@ -1344,6 +1478,7 @@ class OdooReportApp(ctk.CTk):
                         is_cancelled=lambda: self._cancel_flag
                     )
                     self.last_exported_file = res['output_path']
+                    self.last_exported_pdf = None
                     self.after(0, lambda: self._on_success(res))
                 except InterruptedError:
                     self.after(0, lambda: self._on_cancelled())
@@ -1362,6 +1497,11 @@ class OdooReportApp(ctk.CTk):
         self._btn_cancel.configure(state="disabled")
         self._btn_open.configure(state="normal")
         self._btn_open_dir.configure(state="normal")
+        if hasattr(self, '_btn_open_pdf'):
+            if res.get('pdf_path') and os.path.exists(res['pdf_path']):
+                self._btn_open_pdf.configure(state="normal")
+            else:
+                self._btn_open_pdf.configure(state="disabled")
         
         is_pos = hasattr(self, '_report_type_var') and self._report_type_var.get() == "pos_discounts"
         unit_label = "حركة" if is_pos else "صنف"
@@ -1371,13 +1511,27 @@ class OdooReportApp(ctk.CTk):
             is_all = hasattr(self, '_pos_all_sales') and self._pos_all_sales.get()
             rep_title = "كافة مبيعات الأصناف" if is_all else "مبيعات وخصومات نقاط البيع"
             count_label = "إجمالي حركات البيع المطابقة" if is_all else "عدد الحركات المبيعة بخصم"
+            tot_sales = res.get('total_sales', 0.0)
+            tot_comp = res.get('total_compensation', 0.0)
+            tot_qty = res.get('total_qty', 0.0)
+            inv_cnt = res.get('distinct_invoices', 0)
+            top_p_name = res.get('top_product_name', '-')
+            top_p_comp = res.get('top_product_comp', 0.0)
+
             msg = (
                 f"🎉 تم تصدير تقرير {rep_title} بنجاح!\n\n"
-                f"• {count_label}: {res['total_rows']:,}\n"
-                f"• عدد الأعمدة: {res['total_columns']}\n"
-                f"• الوقت المستغرق: {res['total_time']} ثانية\n\n"
-                f"📁 الملف:\n{res['output_path']}"
+                f"📊 ملخص المؤشرات التنفيذية والمالية:\n"
+                f"• 💰 إجمالي المبيعات (شامل الضريبة): {tot_sales:,.2f} ر.س\n"
+                f"• 🎁 إجمالي التعويض المطلوب: {tot_comp:,.2f} ر.س\n"
+                f"• 📦 إجمالي الكميات المباعة: {tot_qty:,.2f}\n"
+                f"• 🧾 {count_label}: {res['total_rows']:,}\n"
+                f"• 🔢 عدد الفواتير الفريدة: {inv_cnt:,}\n"
+                f"• 🏆 أعلى صنف طلباً للتعويض: {top_p_name} ({top_p_comp:,.2f} ر.س)\n"
+                f"• ⏱️ الوقت المستغرق: {res['total_time']} ثانية\n\n"
+                f"📁 ملف الإكسيل الشامل:\n{res['output_path']}"
             )
+            if res.get('pdf_path'):
+                msg += f"\n\n📄 كشف المطالبة المعتمد (PDF جاهز للطباعة والختم):\n{res['pdf_path']}"
         else:
             msg = (
                 f"🎉 تم تصدير التقرير بنجاح!\n\n"
@@ -1409,6 +1563,10 @@ class OdooReportApp(ctk.CTk):
     def _open_file(self):
         if self.last_exported_file and os.path.exists(self.last_exported_file):
             os.startfile(self.last_exported_file)
+
+    def _open_pdf(self):
+        if self.last_exported_pdf and os.path.exists(self.last_exported_pdf):
+            os.startfile(self.last_exported_pdf)
 
     def _open_dir(self):
         if self.last_exported_file:

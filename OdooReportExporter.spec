@@ -1,10 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = []
+datas = [('assets', 'assets')]
 binaries = []
-hiddenimports = ['openpyxl', 'pandas', 'cryptography', 'xmlrpc.client', 'permissions', 'licensing', 'showroom_config', 'pos_discount_engine', 'exporter_engine']
+hiddenimports = ['openpyxl', 'pandas', 'cryptography', 'xmlrpc.client', 'permissions', 'licensing', 'showroom_config', 'company_profile', 'pos_discount_engine', 'exporter_engine', 'win32com.client', 'pythoncom']
 tmp_ret = collect_all('customtkinter')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('PIL')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 

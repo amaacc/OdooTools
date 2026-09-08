@@ -31,6 +31,8 @@ def build():
         "--windowed",
         "--name", "OdooReportExporter",
         "--collect-all", "customtkinter",
+        "--collect-all", "PIL",
+        "--add-data", "assets;assets",
         "--hidden-import", "openpyxl",
         "--hidden-import", "pandas",
         "--hidden-import", "cryptography",
@@ -38,8 +40,11 @@ def build():
         "--hidden-import", "permissions",
         "--hidden-import", "licensing",
         "--hidden-import", "showroom_config",
+        "--hidden-import", "company_profile",
         "--hidden-import", "pos_discount_engine",
         "--hidden-import", "exporter_engine",
+        "--hidden-import", "win32com.client",
+        "--hidden-import", "pythoncom",
         "--clean",
         main_script
     ]
