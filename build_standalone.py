@@ -37,6 +37,9 @@ def build():
         "--hidden-import", "xmlrpc.client",
         "--hidden-import", "permissions",
         "--hidden-import", "licensing",
+        "--hidden-import", "showroom_config",
+        "--hidden-import", "pos_discount_engine",
+        "--hidden-import", "exporter_engine",
         "--clean",
         main_script
     ]

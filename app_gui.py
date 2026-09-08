@@ -1,9 +1,9 @@
 """
-OdooReportExporter – Main GUI (v1.01)
+OdooReportExporter – Main GUI (v1.02)
 Designed & developed by: عبدالله الخطيب (Abdullah Al-Khatib)
 """
 
-APP_VERSION = "v1.01"
+APP_VERSION = "v1.02"
 
 import os
 import sys
@@ -19,6 +19,7 @@ import customtkinter as ctk
 from licensing import get_machine_id, is_activated, activate_device
 from permissions import ALL_PROTECTED_FIELDS, load_permissions, save_permissions, verify_admin_password
 from exporter_engine import get_active_showrooms, get_all_product_tags, generate_report
+from pos_discount_engine import generate_pos_discount_report
 from showroom_config import get_showroom_category, load_showroom_types, save_showroom_types, is_default_care_showroom
 
 
@@ -503,26 +504,75 @@ class OdooReportApp(ctk.CTk):
                      font=ctk.CTkFont(APP_FONT, 17, "bold"),
                      text_color="white").pack()
         ctk.CTkLabel(title_frame,
-                     text="✨ تم التصميم والتطوير بواسطة: عبدالله الخطيب",
+                     text=f"✨ تم التصميم والتطوير بواسطة: عبدالله الخطيب  |  الإصدار {APP_VERSION}",
                      font=ctk.CTkFont(APP_FONT, 11), text_color=BRAND_GOLD).pack()
 
     # ─── SIDEBAR ──────────────────────────────────────────────
     def _build_sidebar(self, parent):
-        sidebar = ctk.CTkFrame(parent, width=220, corner_radius=10)
+        sidebar = ctk.CTkFrame(parent, width=235, corner_radius=10)
         sidebar.pack(side="right", fill="y", padx=(8, 0), pady=6)
         sidebar.pack_propagate(False)
 
         ctk.CTkLabel(sidebar, text="⚙️  إعدادات التصدير",
                      font=ctk.CTkFont(APP_FONT, 13, "bold"),
-                     text_color=(BRAND_BLUE, "#60A5FA")).pack(pady=(14, 8))
+                     text_color=(BRAND_BLUE, "#60A5FA")).pack(pady=(12, 6))
 
-        sep = ctk.CTkFrame(sidebar, height=1, fg_color=("gray80", "#334155"))
-        sep.pack(fill="x", padx=12)
+        sep0 = ctk.CTkFrame(sidebar, height=1, fg_color=("gray80", "#334155"))
+        sep0.pack(fill="x", padx=12)
 
-        # ── Movement filter ──────────────────────────────
-        ctk.CTkLabel(sidebar, text="⚡ حركة الأصناف",
+        # ── Report Type Selector ─────────────────────────
+        ctk.CTkLabel(sidebar, text="📑 نوع التقرير المطلوب",
                      font=ctk.CTkFont(APP_FONT, 11, "bold"),
-                     text_color=BRAND_SLATE).pack(anchor="e", padx=12, pady=(12, 4))
+                     text_color=BRAND_SLATE).pack(anchor="e", padx=12, pady=(8, 4))
+
+        self._report_type_var = ctk.StringVar(value="inventory")
+        ctk.CTkRadioButton(sidebar, text="📊 حركة ومخزون المنتجات", variable=self._report_type_var,
+                           value="inventory", font=ctk.CTkFont(APP_FONT, 11),
+                           command=self._on_report_type_change).pack(anchor="e", padx=16, pady=2)
+        ctk.CTkRadioButton(sidebar, text="🧾 مبيعات وخصومات نقاط البيع", variable=self._report_type_var,
+                           value="pos_discounts", font=ctk.CTkFont(APP_FONT, 11),
+                           command=self._on_report_type_change).pack(anchor="e", padx=16, pady=2)
+
+        sep1 = ctk.CTkFrame(sidebar, height=1, fg_color=("gray80", "#334155"))
+        sep1.pack(fill="x", padx=12, pady=(8, 6))
+
+        # ── Pinned Bottom: Output path & browse ───────────
+        save_frame = ctk.CTkFrame(sidebar, fg_color="transparent")
+        save_frame.pack(side="bottom", fill="x", padx=10, pady=(0, 8))
+
+        sep_save = ctk.CTkFrame(save_frame, height=1, fg_color=("gray80", "#334155"))
+        sep_save.pack(fill="x", padx=2, pady=(2, 6))
+
+        ctk.CTkLabel(save_frame, text="💾 حفظ الملف",
+                     font=ctk.CTkFont(APP_FONT, 11, "bold"),
+                     text_color=BRAND_SLATE).pack(anchor="e", pady=(0, 2))
+
+        default_file = os.path.join(
+            os.path.expanduser("~"), "Desktop",
+            f"تقرير_العسلي_{datetime.now().strftime('%Y%m%d')}.xlsx"
+        )
+        self._path_entry = ctk.CTkEntry(save_frame, placeholder_text="مسار الحفظ...",
+                                        font=ctk.CTkFont(APP_FONT, 10), height=32)
+        self._path_entry.insert(0, default_file)
+        self._path_entry.pack(fill="x", pady=(0, 4))
+
+        ctk.CTkButton(save_frame, text="📂  استعراض", height=30,
+                      fg_color=BRAND_SLATE, hover_color=BRAND_SLATE_HOVER,
+                      font=ctk.CTkFont(APP_FONT, 11),
+                      command=self._browse_path).pack(fill="x")
+
+        # ── Middle dynamic container (Scrollable Frame) ───
+        self._sidebar_scroll = ctk.CTkScrollableFrame(sidebar, fg_color="transparent")
+        self._sidebar_scroll.pack(side="top", fill="both", expand=True, padx=2, pady=0)
+
+        # --- Subframe A: Inventory & Stock Options ---
+        self._inventory_options_frame = ctk.CTkFrame(self._sidebar_scroll, fg_color="transparent")
+        self._inventory_options_frame.pack(fill="x", pady=0)
+
+        # Movement filter
+        ctk.CTkLabel(self._inventory_options_frame, text="⚡ حركة الأصناف",
+                     font=ctk.CTkFont(APP_FONT, 11, "bold"),
+                     text_color=BRAND_SLATE).pack(anchor="e", padx=10, pady=(2, 4))
 
         self._movement_var = ctk.StringVar(value="all")
         movements = [
@@ -532,17 +582,17 @@ class OdooReportApp(ctk.CTk):
             ("low_stock", "📉  قاربت على النفاذ"),
         ]
         for val, label in movements:
-            ctk.CTkRadioButton(sidebar, text=label, variable=self._movement_var,
+            ctk.CTkRadioButton(self._inventory_options_frame, text=label, variable=self._movement_var,
                                value=val, font=ctk.CTkFont(APP_FONT, 11)).pack(
-                anchor="e", padx=18, pady=2)
+                anchor="e", padx=16, pady=2)
 
-        sep2 = ctk.CTkFrame(sidebar, height=1, fg_color=("gray80", "#334155"))
-        sep2.pack(fill="x", padx=12, pady=10)
+        sep_inv1 = ctk.CTkFrame(self._inventory_options_frame, height=1, fg_color=("gray80", "#334155"))
+        sep_inv1.pack(fill="x", padx=8, pady=8)
 
-        # ── Column groups ────────────────────────────────
-        ctk.CTkLabel(sidebar, text="📋 مجموعات الأعمدة",
+        # Column groups
+        ctk.CTkLabel(self._inventory_options_frame, text="📋 مجموعات الأعمدة",
                      font=ctk.CTkFont(APP_FONT, 11, "bold"),
-                     text_color=BRAND_SLATE).pack(anchor="e", padx=12, pady=(0, 4))
+                     text_color=BRAND_SLATE).pack(anchor="e", padx=10, pady=(0, 4))
 
         self._col_basic = ctk.BooleanVar(value=True)
         self._col_price = ctk.BooleanVar(value=True)
@@ -560,42 +610,40 @@ class OdooReportApp(ctk.CTk):
             (self._col_analytics, "تحليلات وتوصيات المخزون"),
         ]
         for var, label in col_options:
-            ctk.CTkCheckBox(sidebar, text=label, variable=var,
-                            font=ctk.CTkFont(APP_FONT, 11)).pack(anchor="e", padx=18, pady=2)
+            ctk.CTkCheckBox(self._inventory_options_frame, text=label, variable=var,
+                            font=ctk.CTkFont(APP_FONT, 11)).pack(anchor="e", padx=16, pady=2)
 
-        sep_guide = ctk.CTkFrame(sidebar, height=1, fg_color=("gray80", "#334155"))
-        sep_guide.pack(fill="x", padx=12, pady=8)
+        sep_guide = ctk.CTkFrame(self._inventory_options_frame, height=1, fg_color=("gray80", "#334155"))
+        sep_guide.pack(fill="x", padx=8, pady=8)
 
-        # ── Documentation / Guide sheet ──────────────────
-        ctk.CTkLabel(sidebar, text="📖 توثيق ودليل التقرير",
+        # Documentation / Guide sheet
+        ctk.CTkLabel(self._inventory_options_frame, text="📖 توثيق ودليل التقرير",
                      font=ctk.CTkFont(APP_FONT, 11, "bold"),
-                     text_color=BRAND_SLATE).pack(anchor="e", padx=12, pady=(0, 4))
+                     text_color=BRAND_SLATE).pack(anchor="e", padx=10, pady=(0, 4))
 
         self._include_guide = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(sidebar, text="تضمين دليل الحسابات في Excel", variable=self._include_guide,
-                        font=ctk.CTkFont(APP_FONT, 11)).pack(anchor="e", padx=18, pady=2)
+        ctk.CTkCheckBox(self._inventory_options_frame, text="تضمين دليل الحسابات في Excel", variable=self._include_guide,
+                        font=ctk.CTkFont(APP_FONT, 11)).pack(anchor="e", padx=16, pady=2)
 
-        sep3 = ctk.CTkFrame(sidebar, height=1, fg_color=("gray80", "#334155"))
-        sep3.pack(fill="x", padx=12, pady=10)
+        # --- Subframe B: POS Discounts Options ---
+        self._pos_options_frame = ctk.CTkFrame(self._sidebar_scroll, fg_color="transparent")
+        # (initially hidden)
 
-        # ── Output path ──────────────────────────────────
-        ctk.CTkLabel(sidebar, text="💾 حفظ الملف",
+        ctk.CTkLabel(self._pos_options_frame, text="🧾 خيارات تقرير الخصومات",
                      font=ctk.CTkFont(APP_FONT, 11, "bold"),
-                     text_color=BRAND_SLATE).pack(anchor="e", padx=12, pady=(0, 4))
+                     text_color=(BRAND_BLUE, "#60A5FA")).pack(anchor="e", padx=10, pady=(4, 4))
 
-        default_file = os.path.join(
-            os.path.expanduser("~"), "Desktop",
-            f"تقرير_العسلي_{datetime.now().strftime('%Y%m%d')}.xlsx"
-        )
-        self._path_entry = ctk.CTkEntry(sidebar, placeholder_text="مسار الحفظ...",
-                                        font=ctk.CTkFont(APP_FONT, 10), height=32)
-        self._path_entry.insert(0, default_file)
-        self._path_entry.pack(fill="x", padx=10, pady=(0, 4))
+        pos_info_card = ctk.CTkFrame(self._pos_options_frame, fg_color=("gray95", "#141D29"), corner_radius=6)
+        pos_info_card.pack(fill="x", padx=8, pady=(0, 8))
+        ctk.CTkLabel(pos_info_card,
+                     text="💡 يستخرج التقرير حركات الكاشير (المبيعات والمرتجعات) التي تشتمل على خصومات فقط، لاحتساب التعويض المستحق من الموردين.",
+                     font=ctk.CTkFont(APP_FONT, 10), text_color=BRAND_SLATE,
+                     wraplength=190, justify="right").pack(padx=8, pady=8)
 
-        ctk.CTkButton(sidebar, text="📂  استعراض", height=30,
-                      fg_color=BRAND_SLATE, hover_color=BRAND_SLATE_HOVER,
-                      font=ctk.CTkFont(APP_FONT, 11),
-                      command=self._browse_path).pack(fill="x", padx=10)
+        self._pos_include_showroom = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(self._pos_options_frame, text="🏢 إضافة عمود المعرض / الفرع",
+                        variable=self._pos_include_showroom,
+                        font=ctk.CTkFont(APP_FONT, 11)).pack(anchor="e", padx=16, pady=4)
 
     # ─── TABS ─────────────────────────────────────────────────
     def _build_tabs(self, parent):
@@ -916,11 +964,43 @@ class OdooReportApp(ctk.CTk):
         else:
             self._custom_dates.pack_forget()
 
+    def _on_report_type_change(self):
+        rtype = self._report_type_var.get()
+        today_str = datetime.now().strftime('%Y%m%d')
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+
+        if rtype == "pos_discounts":
+            self._inventory_options_frame.pack_forget()
+            self._pos_options_frame.pack(fill="x", pady=0)
+            self._btn_export.configure(text=self._get_export_button_text())
+            cur_path = self._path_entry.get().strip()
+            if not cur_path or "تقرير_العسلي_" in cur_path or "تقرير_مبيعات_الخصومات_" in cur_path:
+                self._path_entry.delete(0, "end")
+                self._path_entry.insert(0, os.path.join(desktop, f"تقرير_مبيعات_الخصومات_{today_str}.xlsx"))
+        else:
+            self._pos_options_frame.pack_forget()
+            self._inventory_options_frame.pack(fill="x", pady=0)
+            self._btn_export.configure(text=self._get_export_button_text())
+            cur_path = self._path_entry.get().strip()
+            if not cur_path or "تقرير_العسلي_" in cur_path or "تقرير_مبيعات_الخصومات_" in cur_path:
+                self._path_entry.delete(0, "end")
+                self._path_entry.insert(0, os.path.join(desktop, f"تقرير_العسلي_{today_str}.xlsx"))
+
+    def _get_export_button_text(self):
+        if hasattr(self, '_report_type_var') and self._report_type_var.get() == "pos_discounts":
+            return "🧾  تصدير مبيعات الخصومات (Excel)"
+        return "🚀  بدء تصدير التقرير (Excel)"
+
     def _browse_path(self):
+        default_name = (
+            f"تقرير_مبيعات_الخصومات_{datetime.now().strftime('%Y%m%d')}.xlsx"
+            if hasattr(self, '_report_type_var') and self._report_type_var.get() == "pos_discounts"
+            else f"تقرير_العسلي_{datetime.now().strftime('%Y%m%d')}.xlsx"
+        )
         f = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
             filetypes=[("Excel Files", "*.xlsx")],
-            initialfile=f"تقرير_العسلي_{datetime.now().strftime('%Y%m%d')}.xlsx"
+            initialfile=default_name
         )
         if f:
             self._path_entry.delete(0, "end")
@@ -1199,32 +1279,58 @@ class OdooReportApp(ctk.CTk):
         def _cb(pct, text):
             self.after(0, lambda: self._update_progress(pct, text))
 
-        def _run():
-            try:
-                res = generate_report(
-                    selected_showroom_ids=selected,
-                    column_options=col_opts,
-                    sales_period=period,
-                    custom_date_from=c_from,
-                    custom_date_to=c_to,
-                    movement_filter=self._movement_var.get(),
-                    filter_internal_ref=f_ref,
-                    filter_barcode=f_bc,
-                    filter_name=f_name,
-                    filter_tags=f_tags,
-                    output_path=out_path,
-                    include_methodology_guide=self._include_guide.get(),
-                    progress_callback=_cb,
-                    is_cancelled=lambda: self._cancel_flag
-                )
-                self.last_exported_file = res['output_path']
-                self.after(0, lambda: self._on_success(res))
-            except InterruptedError:
-                self.after(0, lambda: self._on_cancelled())
-            except Exception as e:
-                self.after(0, lambda: self._on_error(e))
+        if self._report_type_var.get() == "pos_discounts":
+            def _run():
+                try:
+                    res = generate_pos_discount_report(
+                        selected_showroom_ids=selected,
+                        sales_period=period,
+                        custom_date_from=c_from,
+                        custom_date_to=c_to,
+                        filter_internal_ref=f_ref,
+                        filter_barcode=f_bc,
+                        filter_name=f_name,
+                        filter_tags=f_tags,
+                        include_showroom_col=self._pos_include_showroom.get(),
+                        output_path=out_path,
+                        progress_callback=_cb,
+                        is_cancelled=lambda: self._cancel_flag
+                    )
+                    self.last_exported_file = res['output_path']
+                    self.after(0, lambda: self._on_success(res))
+                except InterruptedError:
+                    self.after(0, lambda: self._on_cancelled())
+                except Exception as e:
+                    self.after(0, lambda: self._on_error(e))
 
-        threading.Thread(target=_run, daemon=True).start()
+            threading.Thread(target=_run, daemon=True).start()
+        else:
+            def _run():
+                try:
+                    res = generate_report(
+                        selected_showroom_ids=selected,
+                        column_options=col_opts,
+                        sales_period=period,
+                        custom_date_from=c_from,
+                        custom_date_to=c_to,
+                        movement_filter=self._movement_var.get(),
+                        filter_internal_ref=f_ref,
+                        filter_barcode=f_bc,
+                        filter_name=f_name,
+                        filter_tags=f_tags,
+                        output_path=out_path,
+                        include_methodology_guide=self._include_guide.get(),
+                        progress_callback=_cb,
+                        is_cancelled=lambda: self._cancel_flag
+                    )
+                    self.last_exported_file = res['output_path']
+                    self.after(0, lambda: self._on_success(res))
+                except InterruptedError:
+                    self.after(0, lambda: self._on_cancelled())
+                except Exception as e:
+                    self.after(0, lambda: self._on_error(e))
+
+            threading.Thread(target=_run, daemon=True).start()
 
     def _update_progress(self, pct, text):
         self._progress.set(pct / 100.0)
@@ -1232,28 +1338,43 @@ class OdooReportApp(ctk.CTk):
 
     def _on_success(self, res):
         self.is_exporting = False
-        self._btn_export.configure(state="normal", text="🚀  بدء تصدير التقرير (Excel)")
+        self._btn_export.configure(state="normal", text=self._get_export_button_text())
         self._btn_cancel.configure(state="disabled")
         self._btn_open.configure(state="normal")
         self._btn_open_dir.configure(state="normal")
-        self._status_lbl.configure(text=f"✅ اكتمل | {res['total_rows']:,} صنف | {res['total_time']}ث")
-        messagebox.showinfo("اكتمل التصدير",
-            f"🎉 تم تصدير التقرير بنجاح!\n\n"
-            f"• عدد الأصناف المطابقة: {res['total_rows']:,}\n"
-            f"• عدد الأعمدة: {res['total_columns']}\n"
-            f"• الوقت المستغرق: {res['total_time']} ثانية\n\n"
-            f"📁 الملف:\n{res['output_path']}")
+        
+        is_pos = hasattr(self, '_report_type_var') and self._report_type_var.get() == "pos_discounts"
+        unit_label = "حركة" if is_pos else "صنف"
+        self._status_lbl.configure(text=f"✅ اكتمل | {res['total_rows']:,} {unit_label} | {res['total_time']}ث")
+        
+        if is_pos:
+            msg = (
+                f"🎉 تم تصدير تقرير مبيعات وخصومات نقاط البيع بنجاح!\n\n"
+                f"• عدد الحركات المبيعة بخصم: {res['total_rows']:,}\n"
+                f"• عدد الأعمدة: {res['total_columns']}\n"
+                f"• الوقت المستغرق: {res['total_time']} ثانية\n\n"
+                f"📁 الملف:\n{res['output_path']}"
+            )
+        else:
+            msg = (
+                f"🎉 تم تصدير التقرير بنجاح!\n\n"
+                f"• عدد الأصناف المطابقة: {res['total_rows']:,}\n"
+                f"• عدد الأعمدة: {res['total_columns']}\n"
+                f"• الوقت المستغرق: {res['total_time']} ثانية\n\n"
+                f"📁 الملف:\n{res['output_path']}"
+            )
+        messagebox.showinfo("اكتمل التصدير", msg)
 
     def _on_error(self, err):
         self.is_exporting = False
-        self._btn_export.configure(state="normal", text="🚀  بدء تصدير التقرير (Excel)")
+        self._btn_export.configure(state="normal", text=self._get_export_button_text())
         self._btn_cancel.configure(state="disabled")
         self._status_lbl.configure(text="❌ حدث خطأ أثناء التصدير.")
         messagebox.showerror("خطأ في التصدير", f"حدث خطأ:\n\n{err}")
 
     def _on_cancelled(self):
         self.is_exporting = False
-        self._btn_export.configure(state="normal", text="🚀  بدء تصدير التقرير (Excel)")
+        self._btn_export.configure(state="normal", text=self._get_export_button_text())
         self._btn_cancel.configure(state="disabled")
         self._status_lbl.configure(text="⏹ تم إلغاء التصدير.")
 
