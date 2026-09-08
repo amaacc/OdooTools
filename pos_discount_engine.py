@@ -152,17 +152,21 @@ def generate_pos_discount_report(
 
     # 3. Product & Tag filtering
     matched_product_ids = None
-    has_product_filter = bool(filter_internal_ref or filter_barcode or filter_name or filter_tags)
+    ref_tokens = parse_tokens(filter_internal_ref)
+    bc_tokens = parse_tokens(filter_barcode)
+    name_tokens = parse_tokens(filter_name)
+    if isinstance(filter_tags, (list, tuple)):
+        tg_tokens = [str(t).strip() for t in filter_tags if str(t).strip()]
+    else:
+        tg_tokens = parse_tokens(filter_tags)
+
+    has_product_filter = bool(ref_tokens or bc_tokens or name_tokens or tg_tokens)
 
     if has_product_filter:
         p_dom = [['sale_ok', '=', True]]
 
-        # Tags filter
-        if isinstance(filter_tags, (list, tuple)):
-            tg_tokens = [str(t).strip() for t in filter_tags if str(t).strip()]
-        else:
-            tg_tokens = parse_tokens(filter_tags)
-
+        # A. Tags filter
+        matched_tag_ids = None
         if tg_tokens:
             all_tags_list = get_all_product_tags()
             matched_tag_ids = [
@@ -174,24 +178,94 @@ def generate_pos_discount_report(
                 raise ValueError(f"لم يتم العثور على أي وسوم تطابق: '{filter_tags}'. يرجى التأكد من اسم الوسم.")
             p_dom.append(['product_tag_ids', 'in', matched_tag_ids])
 
-        # Query products
-        p_fields = ['id', 'default_code', 'barcode', 'name']
+        # B. Internal Reference (Product code)
+        if ref_tokens:
+            stems = [t.replace('*', '').replace('?', '').strip() for t in ref_tokens if t.strip()]
+            if stems:
+                if len(stems) == 1:
+                    p_dom.append(['default_code', 'ilike', stems[0]])
+                else:
+                    for _ in range(len(stems) - 1):
+                        p_dom.append('|')
+                    for s in stems:
+                        p_dom.append(['default_code', 'ilike', s])
+
+        # C. Barcode & Packaging barcodes
+        if bc_tokens:
+            stems = [t.replace('*', '').replace('?', '').strip() for t in bc_tokens if t.strip()]
+            if stems:
+                clauses = []
+                for s in stems:
+                    clauses.append(['|', ['barcode', 'ilike', s], ['packaging_ids.barcode', 'ilike', s]])
+                if len(clauses) == 1:
+                    p_dom.extend(clauses[0])
+                else:
+                    for _ in range(len(clauses) - 1):
+                        p_dom.append('|')
+                    for cl in clauses:
+                        p_dom.extend(cl)
+
+        # D. Product Name (Arabic OR English)
+        if name_tokens:
+            stems = [t.replace('*', '').replace('?', '').strip() for t in name_tokens if t.strip()]
+            if stems:
+                clauses = []
+                for s in stems:
+                    clauses.append(['|', ['name', 'ilike', s], ['product_name_arabic', 'ilike', s]])
+                if len(clauses) == 1:
+                    p_dom.extend(clauses[0])
+                else:
+                    for _ in range(len(clauses) - 1):
+                        p_dom.append('|')
+                    for cl in clauses:
+                        p_dom.extend(cl)
+
+        # Query product candidates
+        p_fields = ['id', 'default_code', 'barcode', 'name', 'product_name_arabic', 'product_tag_ids']
         found_products = safe_execute_kw(models, db, uid, password, 'product.product', 'search_read',
                                         [p_dom], {'fields': p_fields})
 
-        # Apply internal reference, barcode, and name filters in-memory with wildcards
-        ref_tokens = parse_tokens(filter_internal_ref)
-        bc_tokens = parse_tokens(filter_barcode)
-        name_tokens = parse_tokens(filter_name)
+        # Fetch packaging barcodes for candidates if barcode filter is active
+        cand_pids = [p['id'] for p in found_products]
+        pkg_map = {}
+        if bc_tokens and cand_pids:
+            for i in range(0, len(cand_pids), 5000):
+                batch_pids = cand_pids[i:i + 5000]
+                pkgs = safe_execute_kw(models, db, uid, password, 'product.packaging', 'search_read',
+                                       [[['product_id', 'in', batch_pids], ['barcode', '!=', False]]],
+                                       {'fields': ['product_id', 'barcode']})
+                for pkg in pkgs:
+                    pid = pkg['product_id'][0] if pkg.get('product_id') else None
+                    if pid:
+                        pkg_map.setdefault(pid, []).append(pkg['barcode'])
 
+        # Apply precision in-memory matching with wildcards
         filtered_pids = []
         for p in found_products:
-            if ref_tokens and not match_wildcards(p.get('default_code') or '', ref_tokens):
+            code_val = str(p.get('default_code') or '')
+            barcode_val = str(p.get('barcode') or '')
+            pkg_bcs = pkg_map.get(p['id'], [])
+            name_en = str(p.get('name') or '')
+            name_ar = str(p.get('product_name_arabic') or '')
+            p_tags = p.get('product_tag_ids') or []
+
+            # 1. Product code filter
+            if ref_tokens and not match_wildcards(code_val, ref_tokens):
                 continue
-            if bc_tokens and not match_wildcards(p.get('barcode') or '', bc_tokens):
+
+            # 2. Barcode & Package barcodes filter
+            if bc_tokens and not match_wildcards([barcode_val] + pkg_bcs, bc_tokens):
                 continue
-            if name_tokens and not match_wildcards(p.get('name') or '', name_tokens):
+
+            # 3. Name filter (Arabic or English)
+            if name_tokens and not match_wildcards([name_en, name_ar], name_tokens):
                 continue
+
+            # 4. Tags filter
+            if tg_tokens and matched_tag_ids:
+                if not any(tid in matched_tag_ids for tid in p_tags):
+                    continue
+
             filtered_pids.append(p['id'])
 
         matched_product_ids = filtered_pids
