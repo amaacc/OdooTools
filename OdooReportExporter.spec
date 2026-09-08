@@ -3,7 +3,7 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = []
 binaries = []
-hiddenimports = ['openpyxl', 'pandas', 'cryptography', 'xmlrpc.client', 'permissions', 'licensing']
+hiddenimports = ['openpyxl', 'pandas', 'cryptography', 'xmlrpc.client', 'permissions', 'licensing', 'showroom_config', 'pos_discount_engine', 'exporter_engine']
 tmp_ret = collect_all('customtkinter')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 

@@ -1490,10 +1490,10 @@ def generate_report(
                 cell.value = "▶ الإجماليات"
                 cell.alignment = ALIGN_RT
             elif k == "Internal Reference":
-                cell.value = f'=COUNTA({col_let}{r_start}:{col_let}{r_end})'
+                cell.value = f'=SUBTOTAL(103, {col_let}{r_start}:{col_let}{r_end})'
                 cell.number_format = '#,##0'
             elif ttype == "sum":
-                cell.value = f'=SUM({col_let}{r_start}:{col_let}{r_end})'
+                cell.value = f'=SUBTOTAL(9, {col_let}{r_start}:{col_let}{r_end})'
                 nfmt = spec.get("num_format", "#,##0")
                 cell.number_format = nfmt
             else:
@@ -1549,10 +1549,10 @@ def generate_report(
             (1, "▶ الإجمالي العام", ALIGN_CTR, "@", False),
             (2, "", ALIGN_RT, "@", False),
             (3, "", ALIGN_CTR, "@", False),
-            (4, f"=SUM(D2:D{last_r})", ALIGN_CTR, "#,##0", True),
-            (5, f"=SUM(E2:E{last_r})", ALIGN_RT, "#,##0.00", True),
-            (6, f"=SUM(F2:F{last_r})", ALIGN_RT, "#,##0.00", True),
-            (7, f"=SUM(G2:G{last_r})", ALIGN_CTR, "#,##0", True),
+            (4, f"=SUBTOTAL(9, D2:D{last_r})", ALIGN_CTR, "#,##0", True),
+            (5, f"=SUBTOTAL(9, E2:E{last_r})", ALIGN_RT, "#,##0.00", True),
+            (6, f"=SUBTOTAL(9, F2:F{last_r})", ALIGN_RT, "#,##0.00", True),
+            (7, f"=SUBTOTAL(9, G2:G{last_r})", ALIGN_CTR, "#,##0", True),
         ]
         for c_i, v, align, nfmt, is_formula in tot_cells:
             c = ws2.cell(row=tot_r, column=c_i, value=v)

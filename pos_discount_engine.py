@@ -41,6 +41,7 @@ def generate_pos_discount_report(
     custom_date_from=None,
     custom_date_to=None,
     include_showroom_col=False,
+    include_all_sales=False,
     output_path=None,
     progress_callback=None,
     cancel_check_callback=None,
@@ -277,9 +278,10 @@ def generate_pos_discount_report(
     # PHASE 2 — Multi-Threaded Chunk Retrieval of Discounted Lines
     # ═════════════════════════════════════════════════════════════════════════
     line_domain = [
-        ['discount', '!=', 0],
         ['order_id.state', 'in', ['paid', 'done', 'invoiced']]
     ]
+    if not include_all_sales:
+        line_domain.append(['discount', '!=', 0])
     line_domain += date_filter
 
     if selected_config_ids and len(selected_config_ids) < len(config_to_sh_name):
@@ -289,16 +291,24 @@ def generate_pos_discount_report(
         if len(matched_product_ids) <= 10000:
             line_domain.append(['product_id', 'in', matched_product_ids])
 
-    notify(10, "جاري احتساب إجمالي حركات المبيعات المخصومة في نقاط البيع...")
+    mode_text = "حركات المبيعات" if include_all_sales else "حركات المبيعات المخصومة"
+    notify(10, f"جاري احتساب إجمالي {mode_text} في نقاط البيع...")
     chk()
 
     total_lines = safe_execute_kw(models, db, uid, password, 'pos.order.line', 'search_count', [line_domain])
 
     if total_lines == 0:
-        notify(100, "لم يتم العثور على أي حركات مبيعات تحتوي على خصومات للفلاتر المحددة.")
-        raise ValueError("لم يتم العثور على أي حركات مبيعات تحتوي على خصومات للفلاتر المحددة.")
+        err_msg = f"لم يتم العثور على أي {mode_text} للفلاتر المحددة."
+        notify(100, err_msg)
+        raise ValueError(err_msg)
 
-    notify(15, f"تم العثور على {total_lines:,} حركة مخصومة. جاري جلب تفاصيل السطور بالتوازي...")
+    if total_lines > 1000000:
+        err_msg = f"عدد الحركات المطابقة ({total_lines:,}) يتجاوز سعة ملف إكسيل (1,048,576 سطر). يرجى تضييق نطاق البحث باختيار فترة زمنية أو أصناف أو معارض محددة."
+        notify(100, err_msg)
+        raise ValueError(err_msg)
+
+    mode_hrakat = "حركة بيع" if include_all_sales else "حركة مخصومة"
+    notify(15, f"تم العثور على {total_lines:,} {mode_hrakat}. جاري جلب تفاصيل السطور بالتوازي...")
     chk()
 
     CHUNK_SIZE = 5000
@@ -542,7 +552,8 @@ def generate_pos_discount_report(
 
     # 1. Title Banner (Row 2)
     ws.merge_cells(f"A2:{last_col_letter}2")
-    c_title = ws.cell(row=2, column=1, value=f"🧾 تقرير تفاصيل مبيعات وخصومات نقاط البيع — {period_title}")
+    report_title_mode = "مبيعات نقاط البيع (كافة الحركات)" if include_all_sales else "مبيعات وخصومات نقاط البيع (الحركات المخصومة)"
+    c_title = ws.cell(row=2, column=1, value=f"🧾 تقرير تفاصيل {report_title_mode} — {period_title}")
     c_title.font = font_title
     c_title.fill = fill_title
     c_title.alignment = align_center
@@ -551,7 +562,8 @@ def generate_pos_discount_report(
     # 2. Metadata Information Subtitle (Row 3)
     ws.merge_cells(f"A3:{last_col_letter}3")
     export_time_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-    info_text = f"الفترة: {period_title}  |  المعارض: {showroom_label}  |  عدد الحركات المخصومة: {len(report_rows):,} حركة  |  تاريخ التصدير: {export_time_str}"
+    hrakat_lbl = "عدد الحركات" if include_all_sales else "عدد الحركات المخصومة"
+    info_text = f"الفترة: {period_title}  |  المعارض: {showroom_label}  |  {hrakat_lbl}: {len(report_rows):,} حركة  |  تاريخ التصدير: {export_time_str}"
     c_info = ws.cell(row=3, column=1, value=info_text)
     c_info.font = font_info
     c_info.fill = fill_info
@@ -639,8 +651,8 @@ def generate_pos_discount_report(
             c.value = "▶ الإجمالي العام"
             c.alignment = align_center
 
-    # Sum for Qty
-    c_qty_tot = ws.cell(row=tot_row, column=col_qty_idx, value=f"=SUM({col_qty_letter}{start_data_row}:{col_qty_letter}{end_data_row})")
+    # Sum for Qty (Dynamic with Excel Filter)
+    c_qty_tot = ws.cell(row=tot_row, column=col_qty_idx, value=f"=SUBTOTAL(9, {col_qty_letter}{start_data_row}:{col_qty_letter}{end_data_row})")
     c_qty_tot.fill = fill_totals
     c_qty_tot.font = font_totals
     c_qty_tot.alignment = align_center
@@ -655,16 +667,16 @@ def generate_pos_discount_report(
         c.alignment = align_center
         c.border = border_tot
 
-    # Sum for Subtotal
-    c_subtot = ws.cell(row=tot_row, column=col_subtot_idx, value=f"=SUM({col_subtot_letter}{start_data_row}:{col_subtot_letter}{end_data_row})")
+    # Sum for Subtotal (Dynamic with Excel Filter)
+    c_subtot = ws.cell(row=tot_row, column=col_subtot_idx, value=f"=SUBTOTAL(9, {col_subtot_letter}{start_data_row}:{col_subtot_letter}{end_data_row})")
     c_subtot.fill = fill_totals
     c_subtot.font = font_totals
     c_subtot.alignment = align_right
     c_subtot.number_format = "#,##0.00"
     c_subtot.border = border_tot
 
-    # Sum for Compensation
-    c_comp = ws.cell(row=tot_row, column=col_comp_idx, value=f"=SUM({col_comp_letter}{start_data_row}:{col_comp_letter}{end_data_row})")
+    # Sum for Compensation (Dynamic with Excel Filter)
+    c_comp = ws.cell(row=tot_row, column=col_comp_idx, value=f"=SUBTOTAL(9, {col_comp_letter}{start_data_row}:{col_comp_letter}{end_data_row})")
     c_comp.fill = fill_totals
     c_comp.font = font_totals
     c_comp.alignment = align_right

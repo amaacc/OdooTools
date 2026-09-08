@@ -645,6 +645,12 @@ class OdooReportApp(ctk.CTk):
                         variable=self._pos_include_showroom,
                         font=ctk.CTkFont(APP_FONT, 11)).pack(anchor="e", padx=16, pady=4)
 
+        self._pos_all_sales = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(self._pos_options_frame, text="🛍️  إظهار كل مبيعات الصنف (مع وبدون خصم)",
+                        variable=self._pos_all_sales,
+                        font=ctk.CTkFont(APP_FONT, 11),
+                        command=self._on_pos_options_change).pack(anchor="e", padx=16, pady=(4, 2))
+
     # ─── TABS ─────────────────────────────────────────────────
     def _build_tabs(self, parent):
         self._tabview = ctk.CTkTabview(parent, corner_radius=10)
@@ -974,29 +980,42 @@ class OdooReportApp(ctk.CTk):
             self._pos_options_frame.pack(fill="x", pady=0)
             self._btn_export.configure(text=self._get_export_button_text())
             cur_path = self._path_entry.get().strip()
-            if not cur_path or "تقرير_العسلي_" in cur_path or "تقرير_مبيعات_الخصومات_" in cur_path:
+            if not cur_path or "تقرير_العسلي_" in cur_path or "تقرير_مبيعات_الخصومات_" in cur_path or "تقرير_مبيعات_الأصناف_" in cur_path:
                 self._path_entry.delete(0, "end")
-                self._path_entry.insert(0, os.path.join(desktop, f"تقرير_مبيعات_الخصومات_{today_str}.xlsx"))
+                fname = f"تقرير_مبيعات_الأصناف_{today_str}.xlsx" if (hasattr(self, '_pos_all_sales') and self._pos_all_sales.get()) else f"تقرير_مبيعات_الخصومات_{today_str}.xlsx"
+                self._path_entry.insert(0, os.path.join(desktop, fname))
         else:
             self._pos_options_frame.pack_forget()
             self._inventory_options_frame.pack(fill="x", pady=0)
             self._btn_export.configure(text=self._get_export_button_text())
             cur_path = self._path_entry.get().strip()
-            if not cur_path or "تقرير_العسلي_" in cur_path or "تقرير_مبيعات_الخصومات_" in cur_path:
+            if not cur_path or "تقرير_العسلي_" in cur_path or "تقرير_مبيعات_الخصومات_" in cur_path or "تقرير_مبيعات_الأصناف_" in cur_path:
                 self._path_entry.delete(0, "end")
                 self._path_entry.insert(0, os.path.join(desktop, f"تقرير_العسلي_{today_str}.xlsx"))
 
+    def _on_pos_options_change(self):
+        self._btn_export.configure(text=self._get_export_button_text())
+        today_str = datetime.now().strftime('%Y%m%d')
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        cur_path = self._path_entry.get().strip()
+        if not cur_path or "تقرير_العسلي_" in cur_path or "تقرير_مبيعات_الخصومات_" in cur_path or "تقرير_مبيعات_الأصناف_" in cur_path:
+            self._path_entry.delete(0, "end")
+            fname = f"تقرير_مبيعات_الأصناف_{today_str}.xlsx" if (hasattr(self, '_pos_all_sales') and self._pos_all_sales.get()) else f"تقرير_مبيعات_الخصومات_{today_str}.xlsx"
+            self._path_entry.insert(0, os.path.join(desktop, fname))
+
     def _get_export_button_text(self):
         if hasattr(self, '_report_type_var') and self._report_type_var.get() == "pos_discounts":
+            if hasattr(self, '_pos_all_sales') and self._pos_all_sales.get():
+                return "🧾  تصدير كافة مبيعات الأصناف (Excel)"
             return "🧾  تصدير مبيعات الخصومات (Excel)"
         return "🚀  بدء تصدير التقرير (Excel)"
 
     def _browse_path(self):
-        default_name = (
-            f"تقرير_مبيعات_الخصومات_{datetime.now().strftime('%Y%m%d')}.xlsx"
-            if hasattr(self, '_report_type_var') and self._report_type_var.get() == "pos_discounts"
-            else f"تقرير_العسلي_{datetime.now().strftime('%Y%m%d')}.xlsx"
-        )
+        today_str = datetime.now().strftime('%Y%m%d')
+        if hasattr(self, '_report_type_var') and self._report_type_var.get() == "pos_discounts":
+            default_name = f"تقرير_مبيعات_الأصناف_{today_str}.xlsx" if (hasattr(self, '_pos_all_sales') and self._pos_all_sales.get()) else f"تقرير_مبيعات_الخصومات_{today_str}.xlsx"
+        else:
+            default_name = f"تقرير_العسلي_{today_str}.xlsx"
         f = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
             filetypes=[("Excel Files", "*.xlsx")],
@@ -1292,6 +1311,7 @@ class OdooReportApp(ctk.CTk):
                         filter_name=f_name,
                         filter_tags=f_tags,
                         include_showroom_col=self._pos_include_showroom.get(),
+                        include_all_sales=self._pos_all_sales.get(),
                         output_path=out_path,
                         progress_callback=_cb,
                         is_cancelled=lambda: self._cancel_flag
@@ -1348,9 +1368,12 @@ class OdooReportApp(ctk.CTk):
         self._status_lbl.configure(text=f"✅ اكتمل | {res['total_rows']:,} {unit_label} | {res['total_time']}ث")
         
         if is_pos:
+            is_all = hasattr(self, '_pos_all_sales') and self._pos_all_sales.get()
+            rep_title = "كافة مبيعات الأصناف" if is_all else "مبيعات وخصومات نقاط البيع"
+            count_label = "إجمالي حركات البيع المطابقة" if is_all else "عدد الحركات المبيعة بخصم"
             msg = (
-                f"🎉 تم تصدير تقرير مبيعات وخصومات نقاط البيع بنجاح!\n\n"
-                f"• عدد الحركات المبيعة بخصم: {res['total_rows']:,}\n"
+                f"🎉 تم تصدير تقرير {rep_title} بنجاح!\n\n"
+                f"• {count_label}: {res['total_rows']:,}\n"
                 f"• عدد الأعمدة: {res['total_columns']}\n"
                 f"• الوقت المستغرق: {res['total_time']} ثانية\n\n"
                 f"📁 الملف:\n{res['output_path']}"

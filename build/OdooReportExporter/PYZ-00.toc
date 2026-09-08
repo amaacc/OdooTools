@@ -2726,6 +2726,7 @@
   ('platform',
    'C:\\Users\\Abdullah\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\platform.py',
    'PYMODULE'),
+  ('pos_discount_engine', 'c:\\OdooDB\\pos_discount_engine.py', 'PYMODULE'),
   ('pprint',
    'C:\\Users\\Abdullah\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\pprint.py',
    'PYMODULE'),
