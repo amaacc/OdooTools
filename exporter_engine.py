@@ -130,6 +130,18 @@ def get_all_product_tags():
     return [{'id': t['id'], 'name': t['name']} for t in tags if t.get('name')]
 
 
+def get_all_pricelists():
+    """Returns list of active pricelists from Odoo."""
+    url, db, username, password = get_odoo_credentials()
+    common = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/common')
+    uid = common.authenticate(db, username, password, {})
+    models = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
+
+    pricelists = safe_execute_kw(models, db, uid, password, 'product.pricelist', 'search_read',
+                                 [[['active', '=', True]]], {'fields': ['id', 'name'], 'order': 'name asc'})
+    return [{'id': pl['id'], 'name': pl['name']} for pl in pricelists if pl.get('name')]
+
+
 def _build_methodology_sheet(wb):
     """
     Builds a beautifully formatted RTL documentation sheet:
@@ -279,6 +291,20 @@ def _build_methodology_sheet(wb):
             "• stock.quant المربوطة بمواقع نقاط البيع (POS Locations)\n• إجمالي رصيد الشركة الكلي (Company On Hand)",
             "كشف أي تكدس للبضائع في المستودعات المركزية دون توزيعها على المعارض، وسرعة اكتشاف الفروقات الجردية بين النظام والواقع الفعلي."
         ),
+        (
+            "خصم البيع وقواعد التسعير\nPricelist Discount & Rules",
+            "إدارة المبيعات والتسعير",
+            "تطبيق القواعد النشطة في قائمة الأسعار المحددة (افتراضياً سعر الشاطئ) وفق أولوية Odoo الرسمية:\n1. قاعدة المتغير المحدد (Variant)\n2. قاعدة قالب المنتج (Product Template)\n3. قاعدة وسوم المنتج (Product Tags)\n4. قاعدة تصنيف الصنف (Category)\n5. القاعدة العامة (Global)\nيتم استخراج نسبة الخصم ونوع الاحتساب (نسبة / سعر ثابت / معادلة) والوسم المرتبط.",
+            "• product.pricelist\n• product.pricelist.item\n• product.tag",
+            "معرفة السعر الترويجي المعتمد لكل صنف فورياً والتحقق من تطبيق الخصومات الصحيحة وفق الحملات التسويقية والوسوم المرتبطة بها."
+        ),
+        (
+            "التكلفة الفعلية والسعر الجديد وهامش الربح\nActual Cost, Margin & New Price",
+            "الإدارة المالية والمشتريات",
+            "• التكلفة الفعلية = اعتماد سعر الخصم من المورد Discounted Price إذا وجد > 0، وإلا سعر التكلفة Cost.\n• هامش الربح الفعلي بدون ضريبة = ((سعر البيع ÷ 1.15) - التكلفة الفعلية) ÷ (سعر البيع ÷ 1.15).\n• السعر الجديد المقترح = تقريب ((التكلفة الفعلية ÷ 0.80) × 1.15، 2) لتحقيق هامش ربح حقيقي 20% بعد الضريبة.\nتُكتب كمعادلات Excel ديناميكية تتحدث تلقائياً.",
+            "• product.supplierinfo.price_discounted\n• product.product.standard_price\n• product.template.list_price",
+            "تسعير علمي دقيق يضمن تحقيق هامش ربح صافٍ لا يقل عن 20%، مع عزل أثر ضريبة القيمة المضافة 15% واعتماد تكلفة الشراء المخفضة الحقيقية."
+        ),
     ]
 
     for r_idx, row_data in enumerate(data, 6):
@@ -331,6 +357,7 @@ def generate_report(
     custom_date_from=None,
     custom_date_to=None,
     movement_filter="all",
+    selected_pricelist_id=None,
     column_options=None,
     output_path=None,
     include_methodology_guide=False,
@@ -408,48 +435,69 @@ def generate_report(
                 pkg_map.setdefault(pid, []).append(p['barcode'])
         return pkg_map
 
-    def _fetch_shati():
+    def _fetch_pricelist_rules():
         m = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
-        now_dt = datetime.now()
-        pl = safe_execute_kw(m, db, uid, password, 'product.pricelist', 'search_read',
-                             [[['name', '=', 'سعر الشاطئ']]], {'fields': ['id']})
-        pl_id = pl[0]['id'] if pl else 28
+        pl_id = selected_pricelist_id
+        if not pl_id:
+            pl = safe_execute_kw(m, db, uid, password, 'product.pricelist', 'search_read',
+                                 [[['name', '=', 'سعر الشاطئ']]], {'fields': ['id', 'name']})
+            pl_id = pl[0]['id'] if pl else 28
+
         items = safe_execute_kw(m, db, uid, password, 'product.pricelist.item', 'search_read',
                                 [[['pricelist_id', '=', pl_id]]],
-                                {'fields': ['applied_on', 'compute_price', 'fixed_price',
-                                            'percent_price', 'product_tmpl_id', 'product_id',
-                                            'product_tag_ids', 'date_start', 'date_end']})
-        v_map, t_map, tag_rules = {}, {}, []
+                                {'fields': ['id', 'name', 'applied_on', 'compute_price',
+                                            'fixed_price', 'percent_price', 'price_discount',
+                                            'product_id', 'product_tmpl_id', 'product_tag_ids',
+                                            'categ_id', 'date_start', 'date_end']})
+        now_dt = datetime.now()
+        v_rules, t_rules, tag_rules, c_rules = {}, {}, [], {}
+        global_rule = None
+
         for it in items:
             ds = datetime.strptime(it['date_start'], '%Y-%m-%d %H:%M:%S') if it.get('date_start') else None
             de = datetime.strptime(it['date_end'], '%Y-%m-%d %H:%M:%S') if it.get('date_end') else None
-            if ds and now_dt < ds: continue
-            if de and now_dt > de: continue
-            if it['applied_on'] == '0_product_variant' and it['product_id']:
-                v_map[it['product_id'][0]] = float(it['fixed_price'])
-            elif it['applied_on'] == '1_product' and it['product_tmpl_id']:
-                t_map[it['product_tmpl_id'][0]] = float(it['fixed_price'])
-            elif it['applied_on'] == '1_product_tag' and it['product_tag_ids']:
+            if ds and now_dt < ds:
+                continue
+            if de and now_dt > de:
+                continue
+
+            app = it.get('applied_on')
+            if app == '0_product_variant' and it.get('product_id'):
+                v_rules[it['product_id'][0]] = it
+            elif app == '1_product' and it.get('product_tmpl_id'):
+                t_rules[it['product_tmpl_id'][0]] = it
+            elif app == '1_product_tag' and it.get('product_tag_ids'):
                 for tid in it['product_tag_ids']:
-                    tag_rules.append({'tag_id': tid, 'compute_price': it['compute_price'],
-                                      'percent_price': float(it['percent_price']),
-                                      'fixed_price': float(it['fixed_price'])})
-        return v_map, t_map, tag_rules
+                    tag_rules.append({'tag_id': tid, 'rule': it})
+            elif app == '2_product_category' and it.get('categ_id'):
+                c_rules[it['categ_id'][0]] = it
+            elif app == '3_global':
+                if not global_rule:
+                    global_rule = it
+
+        return {
+            'pricelist_id': pl_id,
+            'variant_rules': v_rules,
+            'tmpl_rules': t_rules,
+            'tag_rules': tag_rules,
+            'categ_rules': c_rules,
+            'global_rule': global_rule
+        }
 
     def _fetch_showrooms():
         return get_active_showrooms()
 
     with ThreadPoolExecutor(max_workers=5) as ex:
-        f_taxes    = ex.submit(_fetch_taxes)
-        f_tags     = ex.submit(_fetch_tags)
-        f_packages = ex.submit(_fetch_packages)
-        f_shati    = ex.submit(_fetch_shati)
+        f_taxes     = ex.submit(_fetch_taxes)
+        f_tags      = ex.submit(_fetch_tags)
+        f_packages  = ex.submit(_fetch_packages)
+        f_pl_rules  = ex.submit(_fetch_pricelist_rules)
         f_showrooms = ex.submit(_fetch_showrooms)
 
-    tax_map  = f_taxes.result()
-    tag_map  = f_tags.result()
-    pkg_map  = f_packages.result()
-    shati_variant_map, shati_tmpl_map, shati_tag_rules = f_shati.result()
+    tax_map   = f_taxes.result()
+    tag_map   = f_tags.result()
+    pkg_map   = f_packages.result()
+    pl_rules  = f_pl_rules.result()
     all_showrooms = f_showrooms.result()
     chk()
 
@@ -796,28 +844,83 @@ def generate_report(
         so_p_val   = float(r.get('sales_price') or 0.0)
         min_p_val  = float(r.get('pos_min_price') or 0.0)
 
-        shati_val = 0.0
-        if pid in shati_variant_map:
-            shati_val = shati_variant_map[pid]
-        elif tid in shati_tmpl_map:
-            shati_val = shati_tmpl_map[tid]
+        # Match product against chosen Pricelist rules
+        matched_rule = None
+        matched_tag_id = None
+
+        if pid in pl_rules['variant_rules']:
+            matched_rule = pl_rules['variant_rules'][pid]
+        elif tid in pl_rules['tmpl_rules']:
+            matched_rule = pl_rules['tmpl_rules'][tid]
         else:
-            for rule in shati_tag_rules:
-                if rule['tag_id'] in tag_ids:
-                    cp = rule['compute_price']
-                    if cp == 'fixed':
-                        shati_val = rule['fixed_price']
-                    elif cp == 'percentage':
-                        shati_val = round(price_val * (1.0 - rule['percent_price'] / 100.0), 2)
+            for tr in pl_rules['tag_rules']:
+                if tr['tag_id'] in tag_ids:
+                    matched_rule = tr['rule']
+                    matched_tag_id = tr['tag_id']
                     break
+            if not matched_rule and r.get('categ_id'):
+                cid = r['categ_id'][0] if isinstance(r['categ_id'], (list, tuple)) else r['categ_id']
+                if cid in pl_rules['categ_rules']:
+                    matched_rule = pl_rules['categ_rules'][cid]
+            if not matched_rule and pl_rules['global_rule']:
+                matched_rule = pl_rules['global_rule']
+
+        if matched_rule:
+            cp = matched_rule.get('compute_price')
+            if cp == 'percentage':
+                rule_comp_val = "نسبة مئوية"
+                pct = float(matched_rule.get('percent_price') or 0.0)
+                rule_discount_val = round(pct / 100.0, 4)
+                shati_val = round(price_val * (1.0 - rule_discount_val), 2)
+            elif cp == 'formula':
+                rule_comp_val = "معادلة"
+                pct = float(matched_rule.get('price_discount') or 0.0)
+                rule_discount_val = round(pct / 100.0, 4)
+                shati_val = round(price_val * (1.0 - rule_discount_val), 2)
+            elif cp == 'fixed':
+                rule_comp_val = "سعر ثابت"
+                fp = float(matched_rule.get('fixed_price') or 0.0)
+                shati_val = fp
+                if price_val > 0 and fp < price_val:
+                    rule_discount_val = round((price_val - fp) / price_val, 4)
+                else:
+                    rule_discount_val = 0.0
             else:
+                rule_comp_val = str(cp or '-')
+                rule_discount_val = 0.0
                 shati_val = price_val
+
+            if matched_rule.get('product_tag_ids'):
+                rule_tag_val = ", ".join([tag_map.get(t, str(t)) for t in matched_rule['product_tag_ids'] if tag_map.get(t)])
+            elif matched_tag_id and tag_map.get(matched_tag_id):
+                rule_tag_val = tag_map[matched_tag_id]
+            else:
+                rule_tag_val = "-"
+        else:
+            rule_comp_val = "-"
+            rule_discount_val = 0.0
+            rule_tag_val = "-"
+            shati_val = price_val
 
         qty_oh     = float(r.get('qty_available') or 0.0)
         total_sold = float(r.get('sales_count') or 0.0)
 
         v_info = vendor_tmpl_map.get(tid, {})
         last_rcv_qty = last_received_map.get(pid, 0.0)
+
+        # Actual Cost: Discounted Price if > 0, else Cost
+        v_disc_price = float(v_info.get('vendor_discounted_price') or 0.0)
+        actual_cost_val = v_disc_price if v_disc_price > 0 else cost_val
+
+        # Actual Margin % Excl. VAT (Price / 1.15 is price excl. VAT)
+        if price_val > 0:
+            p_excl_vat = price_val / 1.15
+            actual_margin_val = round((p_excl_vat - actual_cost_val) / p_excl_vat, 4)
+        else:
+            actual_margin_val = 0.0
+
+        # New Suggested Price: Actual Cost / 0.80 (20% real margin) * 1.15 (15% VAT)
+        new_price_val = round((actual_cost_val / 0.80) * 1.15, 2)
 
         # Showroom stock & sales calculation
         sh_oh_total = 0.0
@@ -908,6 +1011,18 @@ def generate_report(
                 row["SO Price"] = so_p_val
             if permissions.get("Pos Minimum Price", True):
                 row["Pos Minimum Price"] = min_p_val
+            if permissions.get("خصم البيع", True):
+                row["خصم البيع"] = rule_discount_val
+            if permissions.get("نوع احتساب الخصم", True):
+                row["نوع احتساب الخصم"] = rule_comp_val
+            if permissions.get("وسم قاعدة الخصم", True):
+                row["وسم قاعدة الخصم"] = rule_tag_val
+            if permissions.get("التكلفة الفعلية", True):
+                row["التكلفة الفعلية"] = actual_cost_val
+            if permissions.get("هامش الربح الفعلي (%)", True):
+                row["هامش الربح الفعلي (%)"] = actual_margin_val
+            if permissions.get("السعر الجديد", True):
+                row["السعر الجديد"] = new_price_val
 
         if column_options.get('totals', True):
             if permissions.get("Quantity On Hand", True):
@@ -1132,6 +1247,24 @@ def generate_report(
         },
         "Pos Minimum Price": {
             "header": "Min P", "align": ALIGN_RT, "num_format": "#,##0.00", "total_type": None, "width_mode": "auto"
+        },
+        "خصم البيع": {
+            "header": "خصم البيع\n(Pricelist Disc)", "align": ALIGN_CTR, "num_format": "0.0%", "total_type": None, "width_mode": "auto"
+        },
+        "نوع احتساب الخصم": {
+            "header": "نوع الاحتساب\n(Computation)", "align": ALIGN_CTR, "num_format": "@", "total_type": None, "width_mode": "auto"
+        },
+        "وسم قاعدة الخصم": {
+            "header": "وسم الخصم\n(Rule Tag)", "align": ALIGN_CTR, "num_format": "@", "total_type": None, "width_mode": "data_len_capped"
+        },
+        "التكلفة الفعلية": {
+            "header": "التكلفة الفعلية\n(Actual Cost)", "align": ALIGN_RT, "num_format": "#,##0.00", "total_type": None, "width_mode": "auto"
+        },
+        "هامش الربح الفعلي (%)": {
+            "header": "هامش الربح الفعلي\n(Excl. VAT)", "align": ALIGN_CTR, "num_format": "0.0%", "total_type": None, "width_mode": "auto"
+        },
+        "السعر الجديد": {
+            "header": "السعر الجديد\n(شامل الضريبة)", "align": ALIGN_RT, "num_format": "#,##0.00", "total_type": None, "width_mode": "auto"
         },
         "Quantity On Hand": {
             "header": "Quantity\nOn Hand", "align": ALIGN_CTR, "num_format": "#,##0", "total_type": "sum", "width_mode": "auto"
@@ -1394,6 +1527,16 @@ def generate_report(
     ordered_keys = list(col_key_to_excel_col.keys())
     ordered_specs = [COLUMN_SPECS.get(k, {}) for k in ordered_keys]
 
+    cost_col_idx = col_key_to_excel_col.get("Cost")
+    disc_col_idx = col_key_to_excel_col.get("Vendors/Discounted Price")
+    price_col_idx = col_key_to_excel_col.get("Sales Price")
+    actual_cost_col_idx = col_key_to_excel_col.get("التكلفة الفعلية")
+
+    cost_col_let = get_column_letter(cost_col_idx) if cost_col_idx else None
+    disc_col_let = get_column_letter(disc_col_idx) if disc_col_idx else None
+    price_col_let = get_column_letter(price_col_idx) if price_col_idx else None
+    actual_cost_col_let = get_column_letter(actual_cost_col_idx) if actual_cost_col_idx else None
+
     for data_row_idx, row_data in enumerate(export_rows):
         if data_row_idx % 2500 == 0:
             chk()
@@ -1402,16 +1545,30 @@ def generate_report(
 
         is_alt = (data_row_idx % 2 == 1)
         row_fill = FILL_ALT if is_alt else None
+        excel_row = DATA_START_ROW + data_row_idx
 
         row_vals = []
         for k, spec in zip(ordered_keys, ordered_specs):
             is_date = spec.get("is_date", False)
             raw_val = row_data.get(k, "")
             val = _parse_cell_value(raw_val, is_date=is_date)
+
+            # Dynamic Excel formulas for the 3 financial columns
+            if k == "التكلفة الفعلية" and (cost_col_let or disc_col_let):
+                if disc_col_let and cost_col_let:
+                    val = f"=IF({disc_col_let}{excel_row}>0, {disc_col_let}{excel_row}, {cost_col_let}{excel_row})"
+                elif disc_col_let:
+                    val = f"={disc_col_let}{excel_row}"
+                else:
+                    val = f"={cost_col_let}{excel_row}"
+            elif k == "هامش الربح الفعلي (%)" and price_col_let and actual_cost_col_let:
+                val = f"=IF({price_col_let}{excel_row}>0, (({price_col_let}{excel_row}/1.15)-{actual_cost_col_let}{excel_row})/({price_col_let}{excel_row}/1.15), 0)"
+            elif k == "السعر الجديد" and actual_cost_col_let:
+                val = f"=ROUND(({actual_cost_col_let}{excel_row}/0.80)*1.15, 2)"
+
             row_vals.append(val)
 
         ws.append(row_vals)
-        excel_row = DATA_START_ROW + data_row_idx
 
         for c_idx, (k, spec, val) in enumerate(zip(ordered_keys, ordered_specs, row_vals), 1):
             cell = ws.cell(row=excel_row, column=c_idx)
@@ -1446,13 +1603,13 @@ def generate_report(
                 cell.font = FONT_DEFAULT
 
             is_date = spec.get("is_date", False)
+            nfmt = spec.get("num_format")
             if is_date:
                 cell.number_format = 'yyyy-mm-dd'
+            elif nfmt and nfmt != "@":
+                cell.number_format = nfmt
             elif isinstance(val, (int, float)):
-                nfmt = spec.get("num_format")
-                if nfmt:
-                    cell.number_format = nfmt
-                elif isinstance(val, float) and val != int(val):
+                if isinstance(val, float) and val != int(val):
                     cell.number_format = '#,##0.00'
                 else:
                     cell.number_format = '#,##0'

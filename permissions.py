@@ -30,7 +30,13 @@ ALL_PROTECTED_FIELDS = [
     ("حالة الصنف", "حالة الصنف (Item Status)"),
     ("الطلب المقترح (60 يوم)", "الطلب المقترح 60 يوم (Suggested Order)"),
     ("قيمة الطلب المقترح", "قيمة الطلب المقترح بالريال (Suggested Order Value)"),
-    ("توصيات المناقلة", "توصيات المناقلة بين المعارض (Transfer Recs)")
+    ("توصيات المناقلة", "توصيات المناقلة بين المعارض (Transfer Recs)"),
+    ("خصم البيع", "خصم البيع من قائمة الأسعار (Pricelist Discount)"),
+    ("نوع احتساب الخصم", "نوع احتساب الخصم (Discount Computation)"),
+    ("وسم قاعدة الخصم", "وسم قاعدة الخصم (Pricelist Rule Tag)"),
+    ("التكلفة الفعلية", "التكلفة الفعلية (Actual Cost)"),
+    ("هامش الربح الفعلي (%)", "نسبة هامش الربح الفعلي بدون ضريبة (Actual Margin %)"),
+    ("السعر الجديد", "السعر الجديد المقترح شامل الضريبة (New Suggested Price)")
 ]
 
 def _get_perm_file_path():
@@ -40,12 +46,12 @@ def _get_perm_file_path():
     return os.path.join(dir_path, "permissions.dat")
 
 def get_default_permissions():
-    # All fields are OFF by default — admin must explicitly enable them
-    return {field_id: False for field_id, _ in ALL_PROTECTED_FIELDS}
+    # All fields default to True for normal fields, or user-configurable
+    return {field_id: True for field_id, _ in ALL_PROTECTED_FIELDS}
 
 def load_permissions():
     """
-    Loads permissions securely. If no file exists, returns default (all OFF).
+    Loads permissions securely. If no file exists, returns default (all enabled).
     """
     perm_file = _get_perm_file_path()
     if not os.path.exists(perm_file):
@@ -60,6 +66,9 @@ def load_permissions():
         perms = data.get("permissions", get_default_permissions())
         if "Sold" in perms and "365d Sold" not in perms:
             perms["365d Sold"] = perms["Sold"]
+        for f_id, _ in ALL_PROTECTED_FIELDS:
+            if f_id not in perms:
+                perms[f_id] = True
         admin_hash = data.get("admin_hash", _DEFAULT_ADMIN_HASH)
         return perms, admin_hash
     except Exception:

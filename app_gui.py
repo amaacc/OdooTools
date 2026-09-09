@@ -3,7 +3,7 @@ OdooReportExporter – Main GUI (v1.03)
 Designed & developed by: عبدالله الخطيب (Abdullah Al-Khatib)
 """
 
-APP_VERSION = "v1.03"
+APP_VERSION = "v1.04"
 
 import os
 import sys
@@ -18,7 +18,7 @@ import customtkinter as ctk
 
 from licensing import get_machine_id, is_activated, activate_device
 from permissions import ALL_PROTECTED_FIELDS, load_permissions, save_permissions, verify_admin_password
-from exporter_engine import get_active_showrooms, get_all_product_tags, generate_report
+from exporter_engine import get_active_showrooms, get_all_product_tags, get_all_pricelists, generate_report
 from pos_discount_engine import generate_pos_discount_report
 from showroom_config import get_showroom_category, load_showroom_types, save_showroom_types, is_default_care_showroom
 
@@ -464,6 +464,7 @@ class OdooReportApp(ctk.CTk):
         # Async loads
         self._load_showrooms_async()
         self._load_tags_async()
+        self._load_pricelists_async()
 
     # ─── HEADER ───────────────────────────────────────────────
     def _build_header(self, parent):
@@ -596,6 +597,25 @@ class OdooReportApp(ctk.CTk):
 
         sep_inv1 = ctk.CTkFrame(self._inventory_options_frame, height=1, fg_color=("gray80", "#334155"))
         sep_inv1.pack(fill="x", padx=8, pady=8)
+
+        # Pricelist selector
+        ctk.CTkLabel(self._inventory_options_frame, text="🏷️ قائمة الأسعار (Pricelist)",
+                     font=ctk.CTkFont(APP_FONT, 11, "bold"),
+                     text_color=BRAND_SLATE).pack(anchor="e", padx=10, pady=(0, 4))
+
+        self._pricelist_var = ctk.StringVar(value="سعر الشاطئ")
+        self._pricelist_menu = ctk.CTkOptionMenu(
+            self._inventory_options_frame,
+            variable=self._pricelist_var,
+            values=["سعر الشاطئ"],
+            font=ctk.CTkFont(APP_FONT, 10),
+            dropdown_font=ctk.CTkFont(APP_FONT, 10),
+            height=28
+        )
+        self._pricelist_menu.pack(fill="x", padx=12, pady=(0, 4))
+
+        sep_pl = ctk.CTkFrame(self._inventory_options_frame, height=1, fg_color=("gray80", "#334155"))
+        sep_pl.pack(fill="x", padx=8, pady=8)
 
         # Column groups
         ctk.CTkLabel(self._inventory_options_frame, text="📋 مجموعات الأعمدة",
@@ -919,7 +939,8 @@ class OdooReportApp(ctk.CTk):
 
         # Group fields visually
         groups = [
-            ("💰 الأسعار", ["Cost", "Sales Price", "هامش الربح (%)", "Shati Price", "SO Price", "Pos Minimum Price"]),
+            ("💰 الأسعار", ["Cost", "Sales Price", "هامش الربح (%)", "Shati Price", "SO Price", "Pos Minimum Price",
+                           "خصم البيع", "نوع احتساب الخصم", "وسم قاعدة الخصم", "التكلفة الفعلية", "هامش الربح الفعلي (%)", "السعر الجديد"]),
             ("📦 المخزون والمبيعات الإجمالية", ["Quantity On Hand", "365d Sold"]),
             ("🏭 بيانات الموردين", ["Vendors", "Vendors/Price", "Vendors/Discount (%)",
                                    "Vendors/Discounted Price", "Vendors/Last Purchase",
@@ -1385,6 +1406,31 @@ class OdooReportApp(ctk.CTk):
                 pass
         threading.Thread(target=_worker, daemon=True).start()
 
+    def _load_pricelists_async(self):
+        def _worker():
+            try:
+                pls = get_all_pricelists()
+                self._pricelists = pls
+                self._pricelist_map = {pl['name']: pl['id'] for pl in pls}
+                pl_names = [pl['name'] for pl in pls]
+                default_val = "سعر الشاطئ" if "سعر الشاطئ" in pl_names else (pl_names[0] if pl_names else "")
+                self.after(0, lambda: self._update_pricelist_menu(pl_names, default_val))
+            except Exception:
+                pass
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _update_pricelist_menu(self, names, default_val):
+        if hasattr(self, '_pricelist_menu') and names:
+            self._pricelist_menu.configure(values=names)
+            if default_val:
+                self._pricelist_var.set(default_val)
+
+    def _get_selected_pricelist_id(self):
+        if hasattr(self, '_pricelist_map') and hasattr(self, '_pricelist_var'):
+            name = self._pricelist_var.get()
+            return self._pricelist_map.get(name)
+        return None
+
     # ══════════════════════════════════════════════════════
     # 🚀 EXPORT
     # ══════════════════════════════════════════════════════
@@ -1468,6 +1514,7 @@ class OdooReportApp(ctk.CTk):
                         custom_date_from=c_from,
                         custom_date_to=c_to,
                         movement_filter=self._movement_var.get(),
+                        selected_pricelist_id=self._get_selected_pricelist_id(),
                         filter_internal_ref=f_ref,
                         filter_barcode=f_bc,
                         filter_name=f_name,
