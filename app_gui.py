@@ -3,7 +3,7 @@ OdooReportExporter – Main GUI (v1.03)
 Designed & developed by: عبدالله الخطيب (Abdullah Al-Khatib)
 """
 
-APP_VERSION = "v1.06"
+APP_VERSION = "v1.07"
 
 import os
 import sys
@@ -1445,6 +1445,35 @@ class OdooReportApp(ctk.CTk):
             messagebox.showerror("خطأ", "يرجى تحديد مسار حفظ الملف.")
             return
 
+        # Check if destination file(s) are currently open/locked in Excel or another program
+        def _check_locked(p):
+            if p and os.path.exists(p):
+                try:
+                    with open(p, "r+b"):
+                        pass
+                except Exception:
+                    return True
+            return False
+
+        files_to_check = [out_path]
+        if self._report_type_var.get() == "pos_discounts" and hasattr(self, '_pos_export_pdf') and self._pos_export_pdf.get():
+            base_no_ext = os.path.splitext(out_path)[0]
+            files_to_check.append(f"{base_no_ext}_كشف_مطالبة_رسمي.pdf")
+
+        for f_path in files_to_check:
+            if _check_locked(f_path):
+                fn = os.path.basename(f_path)
+                msg = (
+                    f"⚠️ الملف الهدف مفتوح حالياً في برنامج آخر ولا يمكن الكتابة عليه!\n\n"
+                    f"الملف التالي قيد الاستخدام حالياً:\n"
+                    f"📁 {f_path}\n\n"
+                    f"💡 للمتابعة يرجى اختيار أحد الحلين:\n"
+                    f"1️⃣ إغلاق الملف المفتوح ({fn}) في برنامج Excel أو قارئ PDF ثم الضغط على زر التصدير مجدداً.\n"
+                    f"2️⃣ أو تغيير اسم الملف أو مسار الحفظ (من زر 'استعراض' أو كتابة اسم جديد) إذا كنت ترغب في الاحتفاظ بالملف السابق المفتوح.\n"
+                )
+                messagebox.showwarning("الملف قيد الاستخدام", msg)
+                return
+
         selected = [sid for sid, v in self.showroom_vars.items() if v.get()]
 
         col_opts = {
@@ -1596,7 +1625,23 @@ class OdooReportApp(ctk.CTk):
         self._btn_export.configure(state="normal", text=self._get_export_button_text())
         self._btn_cancel.configure(state="disabled")
         self._status_lbl.configure(text="❌ حدث خطأ أثناء التصدير.")
-        messagebox.showerror("خطأ في التصدير", f"حدث خطأ:\n\n{err}")
+
+        err_str = str(err)
+        if isinstance(err, PermissionError) or "[Errno 13]" in err_str or "Permission denied" in err_str:
+            out_path = self._path_entry.get().strip()
+            fn = os.path.basename(out_path)
+            msg = (
+                f"⚠️ تعذر حفظ الملف لأن الملف السابق مفتوح حالياً في برنامج آخر!\n\n"
+                f"يبدو أن الملف التالي مفتوح في برنامج Excel أو قارئ آخر:\n"
+                f"📁 {out_path}\n\n"
+                f"💡 للمتابعة يرجى اختيار أحد الحلين:\n"
+                f"1️⃣ إغلاق الملف المفتوح ({fn}) على جهازك ثم إعادة محاولة التصدير.\n"
+                f"2️⃣ أو تغيير اسم الملف أو مسار الحفظ إذا كنت ترغب في الاحتفاظ بالملف السابق.\n\n"
+                f"ثم أعد الضغط على زر التصدير."
+            )
+            messagebox.showwarning("الملف قيد الاستخدام", msg)
+        else:
+            messagebox.showerror("خطأ في التصدير", f"حدث خطأ:\n\n{err}")
 
     def _on_cancelled(self):
         self.is_exporting = False

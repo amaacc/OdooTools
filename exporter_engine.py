@@ -12,7 +12,9 @@ OPTIMIZATION ARCHITECTURE:
 """
 
 import os
+import sys
 import time
+import math
 import fnmatch
 import xmlrpc.client
 import html
@@ -84,6 +86,22 @@ def clean_html(raw_html):
     text = text.replace('\u200b', '').replace('\xa0', ' ')
     lines = [line.strip() for line in text.split('\n') if line.strip()]
     return "\n".join(lines)
+
+
+def round_retail_price(val):
+    """
+    Rounds retail price:
+    - If whole number, subtracts 1 halala (e.g. 50.00 -> 49.99).
+    - If decimals exist, rounds up to the nearest quarter (0.25):
+      e.g. 50.11 -> 50.25, 50.26 -> 50.50, 50.51 -> 50.75, 50.76 -> 50.99.
+    """
+    if not val or val <= 0:
+        return 0.0
+    val = round(float(val), 2)
+    quarter = math.ceil(val * 4.0) / 4.0
+    if abs(quarter - round(quarter)) < 1e-6:
+        return round(quarter - 0.01, 2)
+    return round(quarter, 2)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -937,8 +955,9 @@ def generate_report(
         else:
             actual_margin_val = 0.0
 
-        # New Suggested Price: Actual Cost / 0.80 (20% real margin) * 1.15 (15% VAT)
-        new_price_val = round((actual_cost_val / 0.80) * 1.15, 2)
+        # New Suggested Price: Actual Cost / 0.80 (20% real margin) * 1.15 (15% VAT) with retail quarter rounding
+        raw_new_p = (actual_cost_val / 0.80) * 1.15 if actual_cost_val > 0 else 0.0
+        new_price_val = round_retail_price(raw_new_p)
 
         # Showroom stock & sales calculation
         sh_oh_total = 0.0
@@ -1587,7 +1606,10 @@ def generate_report(
             elif k == "هامش الربح الفعلي (%)" and price_col_let and actual_cost_col_let:
                 val = f"=IF({price_col_let}{excel_row}>0, (({price_col_let}{excel_row}/1.15)-{actual_cost_col_let}{excel_row})/({price_col_let}{excel_row}/1.15), 0)"
             elif k == "السعر الجديد" and actual_cost_col_let:
-                val = f"=ROUND(({actual_cost_col_let}{excel_row}/0.80)*1.15, 2)"
+                c = f"{actual_cost_col_let}{excel_row}"
+                raw = f"ROUND(({c}/0.80)*1.15, 2)"
+                ceil = f"CEILING({raw}, 0.25)"
+                val = f"=IF({c}<=0, 0, IF({ceil}=INT({ceil}), {ceil}-0.01, {ceil}))"
 
             row_vals.append(val)
 
