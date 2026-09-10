@@ -15,6 +15,8 @@ import os
 import time
 import fnmatch
 import xmlrpc.client
+import html
+import re
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 import openpyxl
@@ -70,6 +72,18 @@ def parse_tokens(s):
     if not s:
         return []
     return [t.strip() for t in s.split(',') if t.strip()]
+
+
+def clean_html(raw_html):
+    """Strip HTML tags and convert <p>/<br> to clean text."""
+    if not raw_html:
+        return ""
+    text = re.sub(r'<(?:br|p|div|/p|/div)[^>]*>', '\n', str(raw_html), flags=re.IGNORECASE)
+    text = re.sub(r'<[^>]+>', '', text)
+    text = html.unescape(text)
+    text = text.replace('\u200b', '').replace('\xa0', ' ')
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    return "\n".join(lines)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -602,7 +616,7 @@ def generate_report(
         'standard_price', 'list_price', 'sales_price', 'pos_min_price',
         'qty_available', 'sales_count',
         'product_tag_ids', 'x_studio_concatenated_tags',
-        'uom_id', 'taxes_id', 'supplier_taxes_id'
+        'uom_id', 'taxes_id', 'supplier_taxes_id', 'description'
     ]
 
     def _parse_m2o(val):
@@ -834,6 +848,7 @@ def generate_report(
         pkg_bc      = r.get('_pkg_bc', [])
         name_val    = str(r.get('name') or '')
         name_ar     = str(r.get('product_name_arabic') or '')
+        notes_val   = clean_html(r.get('description') or '')
         tag_ids     = r.get('product_tag_ids') or []
         tag_names   = r.get('_tag_names', [])
 
@@ -996,6 +1011,8 @@ def generate_report(
             row["Product Packages/Barcode"] = pkg_str
             row["Name"] = name_val
             row["Product Name Arabic"] = name_ar
+            if permissions.get("Internal Notes", True):
+                row["Internal Notes"] = notes_val
             row["Products/Unit of Measure"] = uom
             row["Products/Tags"] = tags_str
             row["Products/Customer Taxes"] = cust_taxes
@@ -1220,6 +1237,9 @@ def generate_report(
         },
         "Product Name Arabic": {
             "header": "Product Name Arabic", "align": ALIGN_RT, "num_format": "@", "total_type": None, "width_mode": "data_len_capped"
+        },
+        "Internal Notes": {
+            "header": "Internal\nNotes", "align": ALIGN_RT, "num_format": "@", "total_type": None, "width_mode": "data_len_capped"
         },
         "Products/Unit of Measure": {
             "header": "Unit", "align": ALIGN_CTR, "num_format": "@", "total_type": None, "width_mode": "auto"

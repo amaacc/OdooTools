@@ -36,7 +36,8 @@ ALL_PROTECTED_FIELDS = [
     ("وسم قاعدة الخصم", "وسم قاعدة الخصم (Pricelist Rule Tag)"),
     ("التكلفة الفعلية", "التكلفة الفعلية (Actual Cost)"),
     ("هامش الربح الفعلي (%)", "نسبة هامش الربح الفعلي بدون ضريبة (Actual Margin %)"),
-    ("السعر الجديد", "السعر الجديد المقترح شامل الضريبة (New Suggested Price)")
+    ("السعر الجديد", "السعر الجديد المقترح شامل الضريبة (New Suggested Price)"),
+    ("Internal Notes", "الملاحظات الداخلية للصنف (Internal Notes)")
 ]
 
 def _get_perm_file_path():

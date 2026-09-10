@@ -3,7 +3,7 @@ OdooReportExporter – Main GUI (v1.03)
 Designed & developed by: عبدالله الخطيب (Abdullah Al-Khatib)
 """
 
-APP_VERSION = "v1.05"
+APP_VERSION = "v1.06"
 
 import os
 import sys
@@ -948,6 +948,7 @@ class OdooReportApp(ctk.CTk):
                                    "Vendors/Last Updated on", "Last Received Qty"]),
             ("🏬 المعارض التفصيلية", ["Showrooms_OnHand", "Showrooms_Sold"]),
             ("📈 تحليلات وتوصيات المخزون", ["تصنيف ABC", "أيام التغطية", "حالة الصنف", "الطلب المقترح (60 يوم)", "قيمة الطلب المقترح", "توصيات المناقلة"]),
+            ("📝 الملاحظات والبيانات الإضافية", ["Internal Notes"]),
         ]
 
         field_label_map = {f_id: f_label for f_id, f_label in ALL_PROTECTED_FIELDS}
