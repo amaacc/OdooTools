@@ -3,7 +3,7 @@ OdooReportExporter – Main GUI (v1.03)
 Designed & developed by: عبدالله الخطيب (Abdullah Al-Khatib)
 """
 
-APP_VERSION = "v1.04"
+APP_VERSION = "v1.05"
 
 import os
 import sys
@@ -772,13 +772,14 @@ class OdooReportApp(ctk.CTk):
         period_card = SectionCard(scroll, title="تحديد الفترة الزمنية للمبيعات", icon="📅")
         period_card.pack(fill="x", padx=4, pady=(4, 8))
 
-        self._period_var = ctk.StringVar(value="all")
+        self._period_var = ctk.StringVar(value="this_year")
         periods = [
-            ("all", "إجمالي كل الفترات (افتراضي)"),
+            ("this_year", f"العام الحالي ({datetime.now().year}) (افتراضي)"),
             ("last_30_days", "آخر 30 يوماً"),
             ("last_60_days", "آخر 60 يوماً"),
             ("last_90_days", "آخر 90 يوماً"),
-            ("this_year", f"العام الحالي ({datetime.now().year})"),
+            ("last_365_days", "آخر 365 يوماً"),
+            ("all", "إجمالي كل الفترات"),
             ("custom", "فترة مخصصة..."),
         ]
         for val, label in periods:

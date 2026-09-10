@@ -148,23 +148,35 @@ def generate_pos_discount_report(
         date_filter = [['order_id.date_order', '>=', start_utc.strftime("%Y-%m-%d %H:%M:%S")]]
         period_title = "آخر 7 أيام"
 
-    elif sales_period == "30d":
+    elif sales_period in ("30d", "last_30_days"):
         start_ksa = (now_ksa - timedelta(days=30)).replace(hour=0, minute=0, second=0, microsecond=0)
         start_utc = start_ksa - timedelta(hours=3)
         date_filter = [['order_id.date_order', '>=', start_utc.strftime("%Y-%m-%d %H:%M:%S")]]
         period_title = "آخر 30 يوماً"
 
-    elif sales_period == "90d":
+    elif sales_period in ("60d", "last_60_days"):
+        start_ksa = (now_ksa - timedelta(days=60)).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_utc = start_ksa - timedelta(hours=3)
+        date_filter = [['order_id.date_order', '>=', start_utc.strftime("%Y-%m-%d %H:%M:%S")]]
+        period_title = "آخر 60 يوماً"
+
+    elif sales_period in ("90d", "last_90_days"):
         start_ksa = (now_ksa - timedelta(days=90)).replace(hour=0, minute=0, second=0, microsecond=0)
         start_utc = start_ksa - timedelta(hours=3)
         date_filter = [['order_id.date_order', '>=', start_utc.strftime("%Y-%m-%d %H:%M:%S")]]
         period_title = "آخر 90 يوماً"
 
-    elif sales_period == "365d":
+    elif sales_period in ("365d", "last_365_days"):
         start_ksa = (now_ksa - timedelta(days=365)).replace(hour=0, minute=0, second=0, microsecond=0)
         start_utc = start_ksa - timedelta(hours=3)
         date_filter = [['order_id.date_order', '>=', start_utc.strftime("%Y-%m-%d %H:%M:%S")]]
         period_title = "آخر 365 يوماً"
+
+    elif sales_period == "this_year":
+        start_ksa = datetime(now_ksa.year, 1, 1, 0, 0, 0)
+        start_utc = start_ksa - timedelta(hours=3)
+        date_filter = [['order_id.date_order', '>=', start_utc.strftime("%Y-%m-%d %H:%M:%S")]]
+        period_title = f"العام الحالي ({now_ksa.year})"
 
     elif sales_period == "custom":
         if custom_date_from:

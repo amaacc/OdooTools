@@ -353,7 +353,7 @@ def generate_report(
     filter_name=None,
     filter_tags=None,
     selected_showroom_ids=None,
-    sales_period="all",
+    sales_period="this_year",
     custom_date_from=None,
     custom_date_to=None,
     movement_filter="all",
@@ -759,6 +759,9 @@ def generate_report(
     elif sales_period == "last_90_days":
         date_filter.append(['date', '>=', (today - timedelta(days=90)).strftime('%Y-%m-%d 00:00:00')])
         period_days = 90
+    elif sales_period in ("last_365_days", "365d"):
+        date_filter.append(['date', '>=', (today - timedelta(days=365)).strftime('%Y-%m-%d 00:00:00')])
+        period_days = 365
     elif sales_period == "this_year":
         date_filter.append(['date', '>=', f"{today.year}-01-01 00:00:00"])
         period_days = max(1, (today - datetime(today.year, 1, 1)).days)
