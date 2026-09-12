@@ -326,6 +326,10 @@ class ShowroomCheckerApp(ctk.CTk):
         self.showroom_map = {}
         self.recent_scans = []
         self._is_querying = False
+        self._pending_code = None
+        self._scan_timer = None
+        self._last_key_time = 0.0
+        self._rapid_keystroke_count = 0
         self.current_product = None
         self.current_raw_input = None
 
@@ -587,11 +591,20 @@ class ShowroomCheckerApp(ctk.CTk):
             bc_row,
             height=46,
             font=ctk.CTkFont(APP_FONT, 15, "bold"),
-            placeholder_text="📷  امسح الباركود بالقارئ الآلي أو اكتب كود الصنف ثم اضغط Enter...",
+            placeholder_text="📷  امسح الباركود بالقارئ الآلي (يبدأ البحث تلقائياً بدون Enter)...",
             justify="right"
         )
         self._barcode_entry.pack(side="right", fill="x", expand=True)
-        self._barcode_entry.bind("<Return>", lambda _: self._trigger_lookup())
+        self._barcode_entry.bind("<Return>", self._on_enter_or_tab)
+        self._barcode_entry.bind("<KP_Enter>", self._on_enter_or_tab)
+        self._barcode_entry.bind("<Tab>", self._on_enter_or_tab)
+        self._barcode_entry.bind("<KeyRelease>", self._on_barcode_key_release)
+
+        # Subtle badge indicating smart auto-scan without Enter
+        bc_hint_row = ctk.CTkFrame(bc_card, fg_color="transparent")
+        bc_hint_row.pack(fill="x", padx=16, pady=(0, 6))
+        ctk.CTkLabel(bc_hint_row, text="⚡ مسح تلقائي فوري: يبدأ البحث تلقائياً بمجرد مسح الباركود دون الحاجة للضغط على زر Enter",
+                     font=ctk.CTkFont(APP_FONT, 10), text_color=BRAND_NEUTRAL).pack(side="right")
 
         # Global Esc key to reset view and refocus
         self.bind("<Escape>", lambda _: self._clear_view())
@@ -729,6 +742,16 @@ class ShowroomCheckerApp(ctk.CTk):
 
     def _clear_view(self):
         """Clears current product display and refocuses barcode entry."""
+        if self._scan_timer is not None:
+            try:
+                self.after_cancel(self._scan_timer)
+            except Exception:
+                pass
+            self._scan_timer = None
+
+        self._pending_code = None
+        self._rapid_keystroke_count = 0
+        self._last_key_time = 0.0
         self.current_product = None
         self.current_raw_input = None
 
@@ -851,9 +874,69 @@ class ShowroomCheckerApp(ctk.CTk):
             self._status_badge.configure(text="🟢 متصل بنظام Odoo", text_color=BRAND_GREEN)
             self._refocus_barcode()
 
-    def _trigger_lookup(self, code_override=None):
-        if self._is_querying:
+    def _on_barcode_key_release(self, event):
+        """
+        Intelligent scanner detection:
+        Detects rapid bursts of keystrokes typical of barcode scanners (inter-key < 75ms)
+        and automatically triggers the search after a minimal pause without requiring Enter.
+        """
+        ignored_keys = {
+            "Return", "KP_Enter", "Tab", "ISO_Left_Tab", "Escape",
+            "Up", "Down", "Left", "Right", "Home", "End", "Prior", "Next",
+            "Shift_L", "Shift_R", "Control_L", "Control_R", "Alt_L", "Alt_R",
+            "Caps_Lock", "Num_Lock", "Scroll_Lock", "Pause"
+        }
+        if event.keysym in ignored_keys:
             return
+
+        if self._scan_timer is not None:
+            try:
+                self.after_cancel(self._scan_timer)
+            except Exception:
+                pass
+            self._scan_timer = None
+
+        code = self._barcode_entry.get().strip()
+        if not code or len(code) < 3:
+            return
+
+        now = time.time()
+        delta = now - self._last_key_time if self._last_key_time > 0 else 1.0
+        self._last_key_time = now
+
+        # Scanners typically enter characters with inter-keystroke time < 75ms
+        if delta < 0.075:
+            self._rapid_keystroke_count += 1
+        else:
+            self._rapid_keystroke_count = 0
+
+        # Fast 180ms debounce for scanner gun bursts, 320ms for manual typing
+        delay_ms = 180 if self._rapid_keystroke_count >= 2 else 320
+        self._scan_timer = self.after(delay_ms, self._auto_trigger_lookup)
+
+    def _auto_trigger_lookup(self):
+        self._scan_timer = None
+        code = self._barcode_entry.get().strip()
+        if code and len(code) >= 3:
+            self._trigger_lookup()
+
+    def _on_enter_or_tab(self, event=None):
+        if self._scan_timer is not None:
+            try:
+                self.after_cancel(self._scan_timer)
+            except Exception:
+                pass
+            self._scan_timer = None
+        self._trigger_lookup()
+        return "break"
+
+    def _trigger_lookup(self, code_override=None):
+        if self._scan_timer is not None:
+            try:
+                self.after_cancel(self._scan_timer)
+            except Exception:
+                pass
+            self._scan_timer = None
 
         if code_override:
             code = str(code_override).strip()
@@ -862,6 +945,10 @@ class ShowroomCheckerApp(ctk.CTk):
 
         if not code:
             self._refocus_barcode()
+            return
+
+        if self._is_querying:
+            self._pending_code = code
             return
 
         sh_name = self._showroom_var.get()
@@ -901,10 +988,8 @@ class ShowroomCheckerApp(ctk.CTk):
         self._is_querying = False
         self._btn_search.configure(text="🔍 بحث")
         self._status_badge.configure(text="🟢 متصل بنظام Odoo", text_color=BRAND_GREEN)
-
-        # Clear and refocus barcode entry so user can scan next immediately
-        self._barcode_entry.delete(0, 'end')
-        self._refocus_barcode()
+        self._rapid_keystroke_count = 0
+        self._last_key_time = 0.0
 
         if err:
             self.current_product = None
@@ -921,22 +1006,34 @@ class ShowroomCheckerApp(ctk.CTk):
             self.lbl_need_badge.configure(text="الصنف غير مسجل", text_color=BRAND_RED)
             self.card_need.configure(border_color=BRAND_RED)
             self.bell()
-            return
 
-        # Store current active item
-        self.current_product = res
-        self.current_raw_input = raw_input
+            # Keep the invalid input selected so cashier sees what was scanned and can overwrite immediately
+            self._refocus_barcode()
+        else:
+            # Clear and refocus barcode entry so user can scan next immediately
+            self._barcode_entry.delete(0, 'end')
+            self._refocus_barcode()
 
-        # Update visual KPI cards and details
-        self._update_display(res)
+            # Store current active item
+            self.current_product = res
+            self.current_raw_input = raw_input
 
-        # Add to recent scans history (avoid duplicates at the top)
-        self.recent_scans = [r for r in self.recent_scans if r.get('id') != res['id']]
-        self.recent_scans.insert(0, res)
-        if len(self.recent_scans) > 25:
-            self.recent_scans.pop()
+            # Update visual KPI cards and details
+            self._update_display(res)
 
-        self._render_history_table()
+            # Add to recent scans history (avoid duplicates at the top)
+            self.recent_scans = [r for r in self.recent_scans if r.get('id') != res['id']]
+            self.recent_scans.insert(0, res)
+            if len(self.recent_scans) > 25:
+                self.recent_scans.pop()
+
+            self._render_history_table()
+
+        # If another scan arrived while query was in flight, trigger it now
+        if self._pending_code:
+            p_code = self._pending_code
+            self._pending_code = None
+            self.after(50, lambda: self._trigger_lookup(code_override=p_code))
 
     def _update_display(self, res):
         """Renders product information, stock, sales, and calculated net needs."""
