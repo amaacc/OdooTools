@@ -383,7 +383,7 @@ class ShowroomCheckerApp(ctk.CTk):
         ctk.CTkLabel(header_frame, text="🏬", font=ctk.CTkFont(size=36)).pack()
         ctk.CTkLabel(header_frame, text="محدد احتياجات ورصيد المعرض",
                      font=ctk.CTkFont(APP_FONT, 18, "bold"), text_color=BRAND_GOLD).pack(pady=(4, 0))
-        ctk.CTkLabel(header_frame, text="شركة العسلي التجارية — تفعيل رخصة الاستخدام",
+        ctk.CTkLabel(header_frame, text="شركة العسلي التجارية — تفعيل رخصة الاستخدام  |  تصميم/ عبدالله الخطيب",
                      font=ctk.CTkFont(APP_FONT, 11), text_color=BRAND_NEUTRAL).pack()
 
         mid_card = ctk.CTkFrame(card, corner_radius=8, fg_color=("gray95", "#0F172A"),
@@ -461,11 +461,18 @@ class ShowroomCheckerApp(ctk.CTk):
 
         # Right branding
         brand_f = ctk.CTkFrame(top_bar, fg_color="transparent")
-        brand_f.pack(side="right", padx=16, pady=8)
+        brand_f.pack(side="right", padx=16, pady=6)
         ctk.CTkLabel(brand_f, text="🏬  محدد احتياجات ورصيد المعرض",
                      font=ctk.CTkFont(APP_FONT, 16, "bold"), text_color=BRAND_GOLD).pack(anchor="e")
-        ctk.CTkLabel(brand_f, text="شركة العسلي التجارية — فحص المخزون والاحتياج اللحظي بالباركود",
-                     font=ctk.CTkFont(APP_FONT, 10), text_color=BRAND_NEUTRAL).pack(anchor="e")
+
+        sub_f = ctk.CTkFrame(brand_f, fg_color="transparent")
+        sub_f.pack(anchor="e")
+        ctk.CTkLabel(sub_f, text="شركة العسلي التجارية — فحص المخزون والاحتياج اللحظي بالباركود",
+                     font=ctk.CTkFont(APP_FONT, 10), text_color=BRAND_NEUTRAL).pack(side="right")
+        ctk.CTkLabel(sub_f, text="  |  ",
+                     font=ctk.CTkFont(APP_FONT, 10), text_color=BRAND_NEUTRAL).pack(side="right")
+        ctk.CTkLabel(sub_f, text="تصميم/ عبدالله الخطيب",
+                     font=ctk.CTkFont(APP_FONT, 10, "bold"), text_color=BRAND_GOLD).pack(side="right")
 
         # Left options (Theme, Status)
         left_f = ctk.CTkFrame(top_bar, fg_color="transparent")
