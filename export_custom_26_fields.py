@@ -377,7 +377,7 @@ def run_export():
                 "Vendor Code": vinfo.get('vendor_code', ''),
                 "Vendor Name": vinfo.get('vendor_name', ''),
                 "Vendors/Price": vinfo.get('vendor_price', 0.0),
-                "Vendors/Discount (%)": vinfo.get('vendor_discount', 0.0),
+                "Vendors/Discount (%)": round(float(vinfo.get('vendor_discount') or 0.0) / 100.0, 4),
                 "Vendors/Discounted Price": vinfo.get('vendor_discounted_price', 0.0),
                 "Vendors/Last Purchase": vinfo.get('vendor_last_purchase', ''),
                 "Vendors/Last Updated on": vinfo.get('vendor_last_updated', ''),

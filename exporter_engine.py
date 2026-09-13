@@ -1075,7 +1075,8 @@ def generate_report(
             if permissions.get("Vendors/Price", True):
                 row["Vendors/Price"] = v_info.get('vendor_price', 0.0)
             if permissions.get("Vendors/Discount (%)", True):
-                row["Vendors/Discount (%)"] = v_info.get('vendor_discount', 0.0)
+                raw_v_disc = float(v_info.get('vendor_discount') or 0.0)
+                row["Vendors/Discount (%)"] = round(raw_v_disc / 100.0, 4)
             if permissions.get("Vendors/Discounted Price", True):
                 row["Vendors/Discounted Price"] = v_info.get('vendor_discounted_price', 0.0)
             if permissions.get("Vendors/Last Purchase", True):
