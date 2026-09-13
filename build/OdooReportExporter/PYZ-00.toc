@@ -1,4 +1,4 @@
-('C:\\OdooDB\\build\\OdooReportExporter\\PYZ-00.pyz',
+('c:\\OdooDB\\build\\OdooReportExporter\\PYZ-00.pyz',
  [('__future__',
    'C:\\Users\\Abdullah\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\__future__.py',
    'PYMODULE'),
