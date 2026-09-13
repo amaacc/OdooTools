@@ -1,9 +1,9 @@
 """
-OdooReportExporter – Main GUI (v1.03)
+OdooReportExporter – Main GUI (v1.08)
 Designed & developed by: عبدالله الخطيب (Abdullah Al-Khatib)
 """
 
-APP_VERSION = "v1.07"
+APP_VERSION = "v1.08"
 
 import os
 import sys
@@ -24,20 +24,41 @@ from showroom_config import get_showroom_category, load_showroom_types, save_sho
 
 
 # ─────────────────────────────────────────────────────────
-# 🎨 Design tokens (override per theme in apply_theme)
+# 🎨 Premium Design System — Professional SaaS Palette
 # ─────────────────────────────────────────────────────────
-BRAND_GOLD = "#D4A017"
-BRAND_BLUE = "#1E6EBA"
-BRAND_BLUE_HOVER = "#1558A0"
+BRAND_GOLD = "#E5B31A"
+BRAND_GOLD_SOFT = "#D4A01744"
+BRAND_BLUE = "#2563EB"
+BRAND_BLUE_HOVER = "#1D4ED8"
+BRAND_BLUE_GLOW = "#3B82F6"
 BRAND_GREEN = "#16A34A"
-BRAND_GREEN_HOVER = "#138040"
-BRAND_RED = "#DC2626"
-BRAND_RED_HOVER = "#B91C1C"
-BRAND_PURPLE = "#7C3AED"
-BRAND_PURPLE_HOVER = "#6D28D9"
+BRAND_GREEN_HOVER = "#15803D"
+BRAND_RED = "#EF4444"
+BRAND_RED_HOVER = "#DC2626"
+BRAND_PURPLE = "#8B5CF6"
+BRAND_PURPLE_HOVER = "#7C3AED"
 BRAND_SLATE = "#64748B"
 BRAND_SLATE_HOVER = "#475569"
 BRAND_DARK = ("#1E293B", "#0F172A")
+
+# Deep background layers
+BG_DEEPEST = "#060D19"
+BG_DEEP = "#0A1128"
+BG_BASE = "#0F172A"
+BG_ELEVATED = "#1E293B"
+BG_CARD = "#172033"
+BG_CARD_LIGHT = "#F8FAFC"
+
+# Border & separator colors
+BORDER_SUBTLE = ("#E2E8F0", "#1E3A5F")
+BORDER_GLOW = ("#CBD5E1", "#2563EB33")
+
+# Header gradient colors
+HDR_BG = ("#1E40AF", "#070E1C")
+HDR_TITLE_COLOR = "#F1F5F9"
+
+# Footer
+FOOTER_BG = ("#F1F5F9", "#0B1222")
 
 APP_FONT = "Segoe UI"
 
@@ -275,23 +296,25 @@ class TagMultiSelect(ctk.CTkFrame):
 
 
 # ─────────────────────────────────────────────────────────
-# 📊 Section Card (visual grouping widget)
+# 📊 Section Card (visual grouping widget) — Premium
 # ─────────────────────────────────────────────────────────
 class SectionCard(ctk.CTkFrame):
-    """A titled card for visually grouping content sections."""
+    """A titled card for visually grouping content sections — premium glass style."""
     def __init__(self, master, title="", icon="", **kwargs):
-        kwargs.setdefault("corner_radius", 10)
+        kwargs.setdefault("corner_radius", 12)
+        kwargs.setdefault("border_width", 1)
+        kwargs.setdefault("border_color", BORDER_SUBTLE)
         super().__init__(master, **kwargs)
 
         if title:
             header = ctk.CTkFrame(self, fg_color="transparent")
-            header.pack(fill="x", padx=14, pady=(10, 0))
+            header.pack(fill="x", padx=16, pady=(12, 0))
             ctk.CTkLabel(header, text=f"{icon}  {title}" if icon else title,
-                         font=ctk.CTkFont(APP_FONT, 13, "bold"),
-                         text_color=(BRAND_BLUE, "#60A5FA")).pack(side="right")
+                         font=ctk.CTkFont(APP_FONT, 14, "bold"),
+                         text_color=(BRAND_BLUE, BRAND_BLUE_GLOW)).pack(side="right")
 
         self.content = ctk.CTkFrame(self, fg_color="transparent")
-        self.content.pack(fill="both", expand=True, padx=14, pady=(6, 12))
+        self.content.pack(fill="both", expand=True, padx=16, pady=(8, 14))
 
 
 # ─────────────────────────────────────────────────────────
@@ -306,8 +329,8 @@ class OdooReportApp(ctk.CTk):
         ctk.set_default_color_theme("blue")
 
         self.title(f"نظام تصدير تقارير منتجات ومعارض Odoo — شركة العسلي التجارية [{APP_VERSION}]")
-        self._center_window(1060, 680)
-        self.minsize(900, 540)
+        self._center_window(1120, 720)
+        self.minsize(960, 580)
 
         self.showrooms = []
         self.all_tags = []
@@ -337,85 +360,89 @@ class OdooReportApp(ctk.CTk):
     # 🔒 ACTIVATION SCREEN
     # ══════════════════════════════════════════════════════
     def _build_activation_screen(self):
-        self._center_window(640, 620)
+        self._center_window(660, 640)
         self.resizable(False, False)
         for w in self.winfo_children():
             w.destroy()
 
-        outer = ctk.CTkFrame(self, fg_color=("gray95", "#0F172A"), corner_radius=0)
+        outer = ctk.CTkFrame(self, fg_color=(BG_CARD_LIGHT, BG_DEEP), corner_radius=0)
         outer.pack(fill="both", expand=True)
 
         # Top Gold accent bar
-        bar = ctk.CTkFrame(outer, fg_color=BRAND_GOLD, height=5, corner_radius=0)
+        bar = ctk.CTkFrame(outer, fg_color=BRAND_GOLD, height=4, corner_radius=0)
         bar.pack(fill="x")
 
         # Main Card
-        card = ctk.CTkFrame(outer, corner_radius=14, fg_color=("white", "#1E293B"),
-                            border_width=1, border_color=("gray85", "#334155"))
-        card.pack(fill="both", expand=True, padx=25, pady=(15, 8))
+        card = ctk.CTkFrame(outer, corner_radius=16, fg_color=("white", BG_ELEVATED),
+                            border_width=1, border_color=BORDER_SUBTLE)
+        card.pack(fill="both", expand=True, padx=28, pady=(18, 10))
 
         # Header with Icon
         header_frame = ctk.CTkFrame(card, fg_color="transparent")
-        header_frame.pack(fill="x", padx=20, pady=(15, 6))
+        header_frame.pack(fill="x", padx=24, pady=(20, 8))
 
-        ctk.CTkLabel(header_frame, text="🔐", font=ctk.CTkFont(size=36)).pack()
+        ctk.CTkLabel(header_frame, text="🔐", font=ctk.CTkFont(size=42)).pack()
         ctk.CTkLabel(header_frame, text="تفعيل وترخيص البرنامج",
-                     font=ctk.CTkFont(APP_FONT, 18, "bold"),
-                     text_color=(BRAND_BLUE, "#60A5FA")).pack(pady=(4, 2))
+                     font=ctk.CTkFont(APP_FONT, 20, "bold"),
+                     text_color=(BRAND_BLUE, BRAND_BLUE_GLOW)).pack(pady=(6, 2))
         ctk.CTkLabel(header_frame, text="هذا البرنامج مخصص ومحمي للأجهزة المعتمدة فقط.",
                      font=ctk.CTkFont(APP_FONT, 11), text_color=BRAND_SLATE).pack()
 
-        sep = ctk.CTkFrame(card, height=1, fg_color=("gray85", "#334155"))
-        sep.pack(fill="x", padx=20, pady=(6, 12))
+        sep = ctk.CTkFrame(card, height=1, fg_color=BORDER_SUBTLE)
+        sep.pack(fill="x", padx=24, pady=(8, 14))
 
         # 1. Machine ID Section
-        mid_box = ctk.CTkFrame(card, fg_color=("gray92", "#0F172A"), corner_radius=10,
-                               border_width=1, border_color=("gray80", "#334155"))
-        mid_box.pack(fill="x", padx=20, pady=(0, 12))
+        mid_box = ctk.CTkFrame(card, fg_color=("gray94", BG_CARD), corner_radius=12,
+                               border_width=1, border_color=BORDER_SUBTLE)
+        mid_box.pack(fill="x", padx=24, pady=(0, 14))
 
         ctk.CTkLabel(mid_box, text="📌 معرّف هذا الجهاز (Machine ID) الخاص بك:",
                      font=ctk.CTkFont(APP_FONT, 12, "bold"),
-                     text_color=(BRAND_BLUE, "#93C5FD")).pack(anchor="e", padx=14, pady=(8, 4))
+                     text_color=(BRAND_BLUE, "#93C5FD")).pack(anchor="e", padx=16, pady=(10, 4))
 
         self._current_mid = get_machine_id()
         mid_row = ctk.CTkFrame(mid_box, fg_color="transparent")
-        mid_row.pack(fill="x", padx=14, pady=(0, 6))
+        mid_row.pack(fill="x", padx=16, pady=(0, 8))
 
         self._mid_entry = ctk.CTkEntry(mid_row, font=ctk.CTkFont("Consolas", 15, "bold"),
-                                       text_color=(BRAND_BLUE, "#60A5FA"), justify="center", height=38)
+                                       text_color=(BRAND_BLUE, BRAND_BLUE_GLOW), justify="center", height=40,
+                                       corner_radius=8)
         self._mid_entry.insert(0, self._current_mid)
         self._mid_entry.configure(state="readonly")
-        self._mid_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self._mid_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
-        ctk.CTkButton(mid_row, text="📋 نسخ المعرّف", width=110, height=38,
+        ctk.CTkButton(mid_row, text="📋 نسخ المعرّف", width=120, height=40,
+                      corner_radius=8,
                       font=ctk.CTkFont(APP_FONT, 12, "bold"),
                       fg_color=BRAND_BLUE, hover_color=BRAND_BLUE_HOVER,
                       command=self._copy_machine_id).pack(side="left")
 
         ctk.CTkLabel(mid_box, text="انسخ المعرّف أعلاه وأرسله للمسؤول (الأستاذ عبدالله الخطيب) للحصول على مفتاح التفعيل.",
-                     font=ctk.CTkFont(APP_FONT, 10), text_color=BRAND_SLATE).pack(anchor="e", padx=14, pady=(0, 8))
+                     font=ctk.CTkFont(APP_FONT, 10), text_color=BRAND_SLATE).pack(anchor="e", padx=16, pady=(0, 10))
 
         # 2. Activation Key Entry Section
         key_box = ctk.CTkFrame(card, fg_color="transparent")
-        key_box.pack(fill="x", padx=20, pady=(0, 10))
+        key_box.pack(fill="x", padx=24, pady=(0, 12))
 
         ctk.CTkLabel(key_box, text="🔑 أدخل مفتاح التفعيل (Activation Key):",
-                     font=ctk.CTkFont(APP_FONT, 12, "bold")).pack(anchor="e", pady=(0, 4))
+                     font=ctk.CTkFont(APP_FONT, 12, "bold")).pack(anchor="e", pady=(0, 6))
 
         self._act_entry = ctk.CTkEntry(key_box, placeholder_text="XXXX-XXXX-XXXX-XXXX",
-                                       font=ctk.CTkFont("Consolas", 15, "bold"), justify="center", height=42)
-        self._act_entry.pack(fill="x", pady=(0, 10))
+                                       font=ctk.CTkFont("Consolas", 15, "bold"), justify="center", height=44,
+                                       corner_radius=8)
+        self._act_entry.pack(fill="x", pady=(0, 12))
         self._act_entry.bind("<Return>", lambda _: self._do_activate())
 
         ctk.CTkButton(key_box, text="🚀  تفعيل البرنامج والبدء بالاستخدام",
                       font=ctk.CTkFont(APP_FONT, 14, "bold"),
                       fg_color=BRAND_GREEN, hover_color=BRAND_GREEN_HOVER,
-                      height=44, command=self._do_activate).pack(fill="x")
+                      corner_radius=10,
+                      height=46, command=self._do_activate).pack(fill="x")
 
         # Footer Signature
         ctk.CTkLabel(outer, text="✨ تم التصميم والتطوير بواسطة: عبدالله الخطيب",
                      font=ctk.CTkFont(APP_FONT, 11, "bold"),
-                     text_color=BRAND_GOLD).pack(side="bottom", pady=(2, 8))
+                     text_color=BRAND_GOLD).pack(side="bottom", pady=(4, 10))
 
     def _copy_machine_id(self):
         self.clipboard_clear()
@@ -430,7 +457,7 @@ class OdooReportApp(ctk.CTk):
         ok, msg = activate_device(key)
         if ok:
             messagebox.showinfo("نجاح التفعيل", "🎉 تم تفعيل البرنامج بنجاح لهذا الجهاز!\n\nيمكنك الآن استخدام كافة ميزات البرنامج.")
-            self._center_window(1060, 680)
+            self._center_window(1120, 720)
             self.resizable(True, True)
             self._build_main_ui()
         else:
@@ -468,41 +495,64 @@ class OdooReportApp(ctk.CTk):
 
     # ─── HEADER ───────────────────────────────────────────────
     def _build_header(self, parent):
+        # Gold top accent strip
+        gold_strip = ctk.CTkFrame(parent, fg_color=BRAND_GOLD, height=3, corner_radius=0)
+        gold_strip.pack(fill="x")
+
         hdr = ctk.CTkFrame(parent, corner_radius=0,
-                            fg_color=(BRAND_BLUE, "#0F1E33"), height=58)
+                            fg_color=HDR_BG, height=64)
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
 
-        # Gold accent strip
-        accent = ctk.CTkFrame(hdr, fg_color=BRAND_GOLD, width=6, corner_radius=0)
-        accent.pack(side="right", fill="y")
+        # Right side: Company logo + name
+        brand_frame = ctk.CTkFrame(hdr, fg_color="transparent")
+        brand_frame.pack(side="right", padx=16, pady=8)
+
+        # Try to load company logo
+        try:
+            logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "company_logo.png")
+            if os.path.exists(logo_path):
+                from PIL import Image
+                logo_img = ctk.CTkImage(light_image=Image.open(logo_path),
+                                        dark_image=Image.open(logo_path),
+                                        size=(38, 38))
+                ctk.CTkLabel(brand_frame, image=logo_img, text="").pack(side="right", padx=(0, 8))
+        except Exception:
+            pass
+
+        ctk.CTkLabel(brand_frame, text="العسلي التجارية",
+                     font=ctk.CTkFont(APP_FONT, 13, "bold"),
+                     text_color=BRAND_GOLD).pack(side="right")
 
         # Left controls
         ctrl_frame = ctk.CTkFrame(hdr, fg_color="transparent")
-        ctrl_frame.pack(side="left", padx=12, pady=8)
+        ctrl_frame.pack(side="left", padx=14, pady=8)
 
         # Theme toggle
         self._theme_var = ctk.StringVar(value="☀️  فاتح" if self.settings.get("theme") == "Light" else "🌙  داكن")
         theme_menu = ctk.CTkOptionMenu(ctrl_frame,
                                        values=["🌙  داكن", "☀️  فاتح"],
                                        variable=self._theme_var,
-                                       width=120, height=30,
+                                       width=115, height=32,
+                                       corner_radius=8,
                                        font=ctk.CTkFont(APP_FONT, 11),
                                        command=self._change_theme)
         theme_menu.pack(side="left", padx=(0, 8))
 
         # Company Profile & Logo button
-        ctk.CTkButton(ctrl_frame, text="🏢  بيانات وشعار الشركة",
+        ctk.CTkButton(ctrl_frame, text="🏢  بيانات الشركة",
                       font=ctk.CTkFont(APP_FONT, 11, "bold"),
                       fg_color=BRAND_BLUE, hover_color=BRAND_BLUE_HOVER,
-                      width=140, height=30,
+                      corner_radius=8,
+                      width=130, height=32,
                       command=self._open_company_profile_dialog).pack(side="left", padx=(0, 8))
 
         # Admin permissions button
-        ctk.CTkButton(ctrl_frame, text="🔒  الصلاحيات الإدارية",
+        ctk.CTkButton(ctrl_frame, text="🔒  الصلاحيات",
                       font=ctk.CTkFont(APP_FONT, 11, "bold"),
                       fg_color=BRAND_PURPLE, hover_color=BRAND_PURPLE_HOVER,
-                      width=140, height=30,
+                      corner_radius=8,
+                      width=120, height=32,
                       command=self._open_admin_dialog).pack(side="left")
 
         # Center: App title
@@ -511,62 +561,65 @@ class OdooReportApp(ctk.CTk):
 
         ctk.CTkLabel(title_frame, text="📊  نظام تصدير تقارير منتجات ومعارض Odoo",
                      font=ctk.CTkFont(APP_FONT, 17, "bold"),
-                     text_color="white").pack()
+                     text_color=HDR_TITLE_COLOR).pack()
         ctk.CTkLabel(title_frame,
-                     text=f"✨ تم التصميم والتطوير بواسطة: عبدالله الخطيب  |  الإصدار {APP_VERSION}",
-                     font=ctk.CTkFont(APP_FONT, 11), text_color=BRAND_GOLD).pack()
+                     text=f"✨ تصميم وتطوير: عبدالله الخطيب  |  الإصدار {APP_VERSION}",
+                     font=ctk.CTkFont(APP_FONT, 10), text_color=BRAND_GOLD).pack()
 
     # ─── SIDEBAR ──────────────────────────────────────────────
     def _build_sidebar(self, parent):
-        sidebar = ctk.CTkFrame(parent, width=235, corner_radius=10)
-        sidebar.pack(side="right", fill="y", padx=(8, 0), pady=6)
+        sidebar = ctk.CTkFrame(parent, width=240, corner_radius=12,
+                                border_width=1, border_color=BORDER_SUBTLE)
+        sidebar.pack(side="right", fill="y", padx=(10, 0), pady=8)
         sidebar.pack_propagate(False)
 
         ctk.CTkLabel(sidebar, text="⚙️  إعدادات التصدير",
-                     font=ctk.CTkFont(APP_FONT, 13, "bold"),
-                     text_color=(BRAND_BLUE, "#60A5FA")).pack(pady=(12, 6))
+                     font=ctk.CTkFont(APP_FONT, 14, "bold"),
+                     text_color=(BRAND_BLUE, BRAND_BLUE_GLOW)).pack(pady=(14, 8))
 
-        sep0 = ctk.CTkFrame(sidebar, height=1, fg_color=("gray80", "#334155"))
-        sep0.pack(fill="x", padx=12)
+        sep0 = ctk.CTkFrame(sidebar, height=1, fg_color=BORDER_SUBTLE)
+        sep0.pack(fill="x", padx=14)
 
         # ── Report Type Selector ─────────────────────────
         ctk.CTkLabel(sidebar, text="📑 نوع التقرير المطلوب",
                      font=ctk.CTkFont(APP_FONT, 11, "bold"),
-                     text_color=BRAND_SLATE).pack(anchor="e", padx=12, pady=(8, 4))
+                     text_color=BRAND_SLATE).pack(anchor="e", padx=14, pady=(10, 4))
 
         self._report_type_var = ctk.StringVar(value="inventory")
         ctk.CTkRadioButton(sidebar, text="📊 حركة ومخزون المنتجات", variable=self._report_type_var,
                            value="inventory", font=ctk.CTkFont(APP_FONT, 11),
-                           command=self._on_report_type_change).pack(anchor="e", padx=16, pady=2)
+                           command=self._on_report_type_change).pack(anchor="e", padx=18, pady=3)
         ctk.CTkRadioButton(sidebar, text="🧾 مبيعات وخصومات نقاط البيع", variable=self._report_type_var,
                            value="pos_discounts", font=ctk.CTkFont(APP_FONT, 11),
-                           command=self._on_report_type_change).pack(anchor="e", padx=16, pady=2)
+                           command=self._on_report_type_change).pack(anchor="e", padx=18, pady=3)
 
-        sep1 = ctk.CTkFrame(sidebar, height=1, fg_color=("gray80", "#334155"))
-        sep1.pack(fill="x", padx=12, pady=(8, 6))
+        sep1 = ctk.CTkFrame(sidebar, height=1, fg_color=BORDER_SUBTLE)
+        sep1.pack(fill="x", padx=14, pady=(10, 8))
 
         # ── Pinned Bottom: Output path & browse ───────────
         save_frame = ctk.CTkFrame(sidebar, fg_color="transparent")
-        save_frame.pack(side="bottom", fill="x", padx=10, pady=(0, 8))
+        save_frame.pack(side="bottom", fill="x", padx=12, pady=(0, 10))
 
-        sep_save = ctk.CTkFrame(save_frame, height=1, fg_color=("gray80", "#334155"))
-        sep_save.pack(fill="x", padx=2, pady=(2, 6))
+        sep_save = ctk.CTkFrame(save_frame, height=1, fg_color=BORDER_SUBTLE)
+        sep_save.pack(fill="x", padx=2, pady=(2, 8))
 
         ctk.CTkLabel(save_frame, text="💾 حفظ الملف",
                      font=ctk.CTkFont(APP_FONT, 11, "bold"),
-                     text_color=BRAND_SLATE).pack(anchor="e", pady=(0, 2))
+                     text_color=BRAND_SLATE).pack(anchor="e", pady=(0, 3))
 
         default_file = os.path.join(
             os.path.expanduser("~"), "Desktop",
             f"تقرير_العسلي_{datetime.now().strftime('%Y%m%d')}.xlsx"
         )
         self._path_entry = ctk.CTkEntry(save_frame, placeholder_text="مسار الحفظ...",
-                                        font=ctk.CTkFont(APP_FONT, 10), height=32)
+                                        font=ctk.CTkFont(APP_FONT, 10), height=34,
+                                        corner_radius=8)
         self._path_entry.insert(0, default_file)
         self._path_entry.pack(fill="x", pady=(0, 4))
 
-        ctk.CTkButton(save_frame, text="📂  استعراض", height=30,
+        ctk.CTkButton(save_frame, text="📂  استعراض", height=32,
                       fg_color=BRAND_SLATE, hover_color=BRAND_SLATE_HOVER,
+                      corner_radius=8,
                       font=ctk.CTkFont(APP_FONT, 11),
                       command=self._browse_path).pack(fill="x")
 
@@ -595,7 +648,7 @@ class OdooReportApp(ctk.CTk):
                                value=val, font=ctk.CTkFont(APP_FONT, 11)).pack(
                 anchor="e", padx=16, pady=2)
 
-        sep_inv1 = ctk.CTkFrame(self._inventory_options_frame, height=1, fg_color=("gray80", "#334155"))
+        sep_inv1 = ctk.CTkFrame(self._inventory_options_frame, height=1, fg_color=BORDER_SUBTLE)
         sep_inv1.pack(fill="x", padx=8, pady=8)
 
         # Pricelist selector
@@ -610,11 +663,12 @@ class OdooReportApp(ctk.CTk):
             values=["سعر الشاطئ"],
             font=ctk.CTkFont(APP_FONT, 10),
             dropdown_font=ctk.CTkFont(APP_FONT, 10),
-            height=28
+            corner_radius=8,
+            height=30
         )
         self._pricelist_menu.pack(fill="x", padx=12, pady=(0, 4))
 
-        sep_pl = ctk.CTkFrame(self._inventory_options_frame, height=1, fg_color=("gray80", "#334155"))
+        sep_pl = ctk.CTkFrame(self._inventory_options_frame, height=1, fg_color=BORDER_SUBTLE)
         sep_pl.pack(fill="x", padx=8, pady=8)
 
         # Column groups
@@ -641,7 +695,7 @@ class OdooReportApp(ctk.CTk):
             ctk.CTkCheckBox(self._inventory_options_frame, text=label, variable=var,
                             font=ctk.CTkFont(APP_FONT, 11)).pack(anchor="e", padx=16, pady=2)
 
-        sep_guide = ctk.CTkFrame(self._inventory_options_frame, height=1, fg_color=("gray80", "#334155"))
+        sep_guide = ctk.CTkFrame(self._inventory_options_frame, height=1, fg_color=BORDER_SUBTLE)
         sep_guide.pack(fill="x", padx=8, pady=8)
 
         # Documentation / Guide sheet
@@ -659,9 +713,10 @@ class OdooReportApp(ctk.CTk):
 
         ctk.CTkLabel(self._pos_options_frame, text="🧾 خيارات تقرير الخصومات",
                      font=ctk.CTkFont(APP_FONT, 11, "bold"),
-                     text_color=(BRAND_BLUE, "#60A5FA")).pack(anchor="e", padx=10, pady=(4, 4))
+                     text_color=(BRAND_BLUE, BRAND_BLUE_GLOW)).pack(anchor="e", padx=10, pady=(4, 4))
 
-        pos_info_card = ctk.CTkFrame(self._pos_options_frame, fg_color=("gray95", "#141D29"), corner_radius=6)
+        pos_info_card = ctk.CTkFrame(self._pos_options_frame, fg_color=("gray95", BG_CARD), corner_radius=8,
+                                     border_width=1, border_color=BORDER_SUBTLE)
         pos_info_card.pack(fill="x", padx=8, pady=(0, 8))
         ctk.CTkLabel(pos_info_card,
                      text="💡 يستخرج التقرير حركات الكاشير (المبيعات والمرتجعات) التي تشتمل على خصومات فقط، لاحتساب التعويض المستحق من الموردين.",
@@ -696,8 +751,9 @@ class OdooReportApp(ctk.CTk):
 
     # ─── TABS ─────────────────────────────────────────────────
     def _build_tabs(self, parent):
-        self._tabview = ctk.CTkTabview(parent, corner_radius=10)
-        self._tabview.pack(side="left", fill="both", expand=True, pady=6)
+        self._tabview = ctk.CTkTabview(parent, corner_radius=12,
+                                        border_width=1, border_color=BORDER_SUBTLE)
+        self._tabview.pack(side="left", fill="both", expand=True, pady=8)
 
         tab_filters = self._tabview.add("🔍  فلاتر الأصناف")
         tab_period = self._tabview.add("📅  الفترة الزمنية")
@@ -837,8 +893,8 @@ class OdooReportApp(ctk.CTk):
                       height=28, font=ctk.CTkFont(APP_FONT, 11),
                       command=self._select_showrooms).pack(side="left", padx=4)
 
-        self._sh_scroll = ctk.CTkScrollableFrame(parent, fg_color=("gray92", "#1A2230"),
-                                                  corner_radius=8)
+        self._sh_scroll = ctk.CTkScrollableFrame(parent, fg_color=("gray94", BG_CARD),
+                                                  corner_radius=10)
         self._sh_scroll.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
         self._sh_loading = ctk.CTkLabel(self._sh_scroll,
@@ -849,54 +905,60 @@ class OdooReportApp(ctk.CTk):
     # ─── FOOTER ───────────────────────────────────────────────
     def _build_footer(self, parent):
         footer = ctk.CTkFrame(parent, corner_radius=0,
-                               fg_color=("gray90", "#0D1724"), height=88)
+                               fg_color=FOOTER_BG, height=92)
         footer.pack(fill="x", side="bottom")
         footer.pack_propagate(False)
 
         # Progress bar
-        self._progress = ctk.CTkProgressBar(footer, height=8, corner_radius=4)
-        self._progress.pack(fill="x", padx=16, pady=(10, 2))
+        self._progress = ctk.CTkProgressBar(footer, height=6, corner_radius=3,
+                                             progress_color=(BRAND_BLUE, BRAND_BLUE_GLOW))
+        self._progress.pack(fill="x", padx=18, pady=(12, 3))
         self._progress.set(0)
 
         self._status_lbl = ctk.CTkLabel(footer, text="جاهز.",
                                          font=ctk.CTkFont(APP_FONT, 11),
                                          text_color=BRAND_SLATE)
-        self._status_lbl.pack(anchor="e", padx=18)
+        self._status_lbl.pack(anchor="e", padx=20)
 
         btn_row = ctk.CTkFrame(footer, fg_color="transparent")
-        btn_row.pack(fill="x", padx=16, pady=(2, 8))
+        btn_row.pack(fill="x", padx=18, pady=(3, 10))
 
-        self._btn_open_dir = ctk.CTkButton(btn_row, text="📁 المجلد", width=100, height=34,
+        self._btn_open_dir = ctk.CTkButton(btn_row, text="📁 المجلد", width=100, height=36,
+                                            corner_radius=8,
                                             fg_color=BRAND_SLATE, hover_color=BRAND_SLATE_HOVER,
                                             state="disabled", command=self._open_dir)
         self._btn_open_dir.pack(side="left", padx=4)
 
-        self._btn_open = ctk.CTkButton(btn_row, text="📊 فتح الإكسيل", width=115, height=34,
+        self._btn_open = ctk.CTkButton(btn_row, text="📊 فتح الإكسيل", width=120, height=36,
+                                        corner_radius=8,
                                         fg_color=BRAND_GREEN, hover_color=BRAND_GREEN_HOVER,
                                         state="disabled", command=self._open_file)
         self._btn_open.pack(side="left", padx=4)
 
-        self._btn_open_pdf = ctk.CTkButton(btn_row, text="📄 فتح كشف PDF", width=120, height=34,
+        self._btn_open_pdf = ctk.CTkButton(btn_row, text="📄 فتح كشف PDF", width=125, height=36,
+                                           corner_radius=8,
                                            fg_color="#059669", hover_color="#047857",
                                            state="disabled", command=self._open_pdf)
         self._btn_open_pdf.pack(side="left", padx=4)
 
-        self._btn_cancel = ctk.CTkButton(btn_row, text="⏹ إلغاء", width=100, height=34,
+        self._btn_cancel = ctk.CTkButton(btn_row, text="⏹ إلغاء", width=100, height=36,
+                                          corner_radius=8,
                                           fg_color=BRAND_RED, hover_color=BRAND_RED_HOVER,
                                           state="disabled", command=self._cancel_export)
         self._btn_cancel.pack(side="left", padx=4)
 
         self._btn_export = ctk.CTkButton(btn_row,
                                           text="🚀  بدء تصدير التقرير (Excel)",
-                                          font=ctk.CTkFont(APP_FONT, 14, "bold"),
+                                          font=ctk.CTkFont(APP_FONT, 15, "bold"),
                                           fg_color=BRAND_BLUE, hover_color=BRAND_BLUE_HOVER,
-                                          height=40, command=self._start_export)
-        self._btn_export.pack(side="right", fill="x", expand=True, padx=(12, 0))
+                                          corner_radius=10,
+                                          height=42, command=self._start_export)
+        self._btn_export.pack(side="right", fill="x", expand=True, padx=(14, 0))
 
         # Bottom signature
         ctk.CTkLabel(parent,
                      text="تصميم وبرمجة: عبدالله الخطيب  |  Abdullah Al-Khatib © 2026  |  جميع الحقوق محفوظة",
-                     font=ctk.CTkFont(APP_FONT, 10), text_color=("gray50", "#3D5168")).pack(pady=(0, 4))
+                     font=ctk.CTkFont(APP_FONT, 10), text_color=("gray50", "#3D5168")).pack(pady=(0, 5))
 
     # ══════════════════════════════════════════════════════
     # 🔒 ADMIN PERMISSIONS DIALOG
@@ -916,24 +978,24 @@ class OdooReportApp(ctk.CTk):
     def _show_permissions_editor(self):
         win = ctk.CTkToplevel(self)
         win.title("🛡️ لوحة تحكم الصلاحيات — عبدالله الخطيب")
-        win.geometry("680x700")
-        win.minsize(620, 620)
+        win.geometry("700x720")
+        win.minsize(640, 640)
         win.grab_set()
         win.lift()
 
         # Header
-        hdr = ctk.CTkFrame(win, fg_color=(BRAND_PURPLE, "#2D1B69"), corner_radius=0)
+        hdr = ctk.CTkFrame(win, fg_color=(BRAND_PURPLE, "#1A0F3D"), corner_radius=0)
         hdr.pack(fill="x")
         ctk.CTkLabel(hdr, text="🛡️  التحكم في الحقول المسموح بظهورها للمستخدمين",
-                     font=ctk.CTkFont(APP_FONT, 15, "bold"), text_color="white").pack(pady=14, padx=20)
+                     font=ctk.CTkFont(APP_FONT, 15, "bold"), text_color="white").pack(pady=16, padx=24)
 
         ctk.CTkLabel(win,
                      text="✅ مفعّل = يظهر الحقل في التصدير  |  ❌ معطّل = يُحجب الحقل نهائياً",
-                     font=ctk.CTkFont(APP_FONT, 12), text_color=BRAND_SLATE).pack(pady=(8, 4))
+                     font=ctk.CTkFont(APP_FONT, 12), text_color=BRAND_SLATE).pack(pady=(10, 4))
 
-        scroll = ctk.CTkScrollableFrame(win, height=360, corner_radius=8,
-                                         fg_color=("gray92", "#1A2230"))
-        scroll.pack(fill="x", padx=20, pady=4)
+        scroll = ctk.CTkScrollableFrame(win, height=360, corner_radius=10,
+                                         fg_color=("gray94", BG_CARD))
+        scroll.pack(fill="x", padx=22, pady=4)
 
         current_perms, _ = load_permissions()
         field_vars = {}
@@ -954,14 +1016,14 @@ class OdooReportApp(ctk.CTk):
         field_label_map = {f_id: f_label for f_id, f_label in ALL_PROTECTED_FIELDS}
 
         for group_title, field_ids in groups:
-            grp_header = ctk.CTkFrame(scroll, fg_color=("gray85", "#253047"), corner_radius=6)
-            grp_header.pack(fill="x", padx=4, pady=(8, 2))
+            grp_header = ctk.CTkFrame(scroll, fg_color=("gray88", "#1E2D45"), corner_radius=8)
+            grp_header.pack(fill="x", padx=4, pady=(10, 2))
             ctk.CTkLabel(grp_header, text=group_title,
                          font=ctk.CTkFont(APP_FONT, 12, "bold"),
-                         text_color=(BRAND_PURPLE, "#A78BFA")).pack(anchor="e", padx=12, pady=4)
+                         text_color=(BRAND_PURPLE, "#C4B5FD")).pack(anchor="e", padx=14, pady=5)
 
             grp_content = ctk.CTkFrame(scroll, fg_color="transparent")
-            grp_content.pack(fill="x", padx=12, pady=2)
+            grp_content.pack(fill="x", padx=14, pady=2)
 
             for f_id in field_ids:
                 var = ctk.BooleanVar(value=current_perms.get(f_id, False))
@@ -969,11 +1031,11 @@ class OdooReportApp(ctk.CTk):
                 ctk.CTkCheckBox(grp_content,
                                 text=field_label_map.get(f_id, f_id),
                                 variable=var,
-                                font=ctk.CTkFont(APP_FONT, 12)).pack(anchor="e", padx=20, pady=4)
+                                font=ctk.CTkFont(APP_FONT, 12)).pack(anchor="e", padx=22, pady=4)
 
         # Quick actions
         qa_frame = ctk.CTkFrame(win, fg_color="transparent")
-        qa_frame.pack(fill="x", padx=20, pady=(4, 0))
+        qa_frame.pack(fill="x", padx=22, pady=(6, 0))
         ctk.CTkButton(qa_frame, text="✅ تفعيل الكل", width=120, height=28,
                       fg_color=BRAND_GREEN, hover_color=BRAND_GREEN_HOVER,
                       command=lambda: [v.set(True) for v in field_vars.values()]).pack(side="right", padx=4)
@@ -983,9 +1045,10 @@ class OdooReportApp(ctk.CTk):
 
         # Password change
         pass_card = SectionCard(win, title="تغيير كلمة مرور الإدارة (اتركها فارغة إذا لا ترغب بالتغيير)", icon="🔑")
-        pass_card.pack(fill="x", padx=20, pady=(8, 0))
-        new_pass = ctk.CTkEntry(pass_card.content, show="●", height=34,
+        pass_card.pack(fill="x", padx=22, pady=(8, 0))
+        new_pass = ctk.CTkEntry(pass_card.content, show="●", height=36,
                                 placeholder_text="كلمة المرور الجديدة...",
+                                corner_radius=8,
                                 font=ctk.CTkFont("Consolas", 13))
         new_pass.pack(fill="x")
 
@@ -1004,7 +1067,8 @@ class OdooReportApp(ctk.CTk):
         ctk.CTkButton(win, text="💾  حفظ الصلاحيات والإعدادات المشفرة",
                       font=ctk.CTkFont(APP_FONT, 13, "bold"),
                       fg_color=BRAND_PURPLE, hover_color=BRAND_PURPLE_HOVER,
-                      height=40, command=_save).pack(fill="x", padx=20, pady=12)
+                      corner_radius=10,
+                      height=42, command=_save).pack(fill="x", padx=22, pady=14)
 
     # ══════════════════════════════════════════════════════
     # ⚙️ HELPERS
@@ -1114,7 +1178,7 @@ class OdooReportApp(ctk.CTk):
 
         dlg = ctk.CTkToplevel(self)
         dlg.title("🏢 تعديل تصنيف فروع الشركة (معارض / عناية)")
-        dlg.geometry("620x660")
+        dlg.geometry("640x680")
         dlg.resizable(True, True)
         dlg.transient(self)
         dlg.grab_set()
@@ -1122,19 +1186,19 @@ class OdooReportApp(ctk.CTk):
         dlg.focus_force()
 
         # Header
-        hdr = ctk.CTkFrame(dlg, fg_color=(BRAND_BLUE, "#0F1E33"), height=60, corner_radius=0)
+        hdr = ctk.CTkFrame(dlg, fg_color=HDR_BG, height=62, corner_radius=0)
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
 
-        accent = ctk.CTkFrame(hdr, fg_color=BRAND_GOLD, width=6, corner_radius=0)
+        accent = ctk.CTkFrame(hdr, fg_color=BRAND_GOLD, width=4, corner_radius=0)
         accent.pack(side="right", fill="y")
 
         hdr_content = ctk.CTkFrame(hdr, fg_color="transparent")
-        hdr_content.pack(side="right", fill="both", expand=True, padx=14, pady=8)
+        hdr_content.pack(side="right", fill="both", expand=True, padx=16, pady=10)
 
         ctk.CTkLabel(hdr_content, text="🏢  تصنيف فروع الشركة (معارض / عناية)",
                      font=ctk.CTkFont(APP_FONT, 14, "bold"), text_color="white").pack(anchor="e")
-        ctk.CTkLabel(hdr_content, text="حدد نوع كل فرع (معارض أو عناية). فروع العناية تُلوَّن باللون الفيروزي الفاتح في التقرير والملخصات.",
+        ctk.CTkLabel(hdr_content, text="حدد نوع كل فرع (معارض أو عناية). فروع العناية تُلوَّن باللون الفيروزي الفاتح في التقرير والملخصات.",
                      font=ctk.CTkFont(APP_FONT, 10), text_color="gray80").pack(anchor="e")
 
         # Current types
@@ -1142,12 +1206,12 @@ class OdooReportApp(ctk.CTk):
         var_map = {}
 
         # Scrollable table
-        scroll = ctk.CTkScrollableFrame(dlg, fg_color=("gray95", "#141D29"))
-        scroll.pack(fill="both", expand=True, padx=12, pady=8)
+        scroll = ctk.CTkScrollableFrame(dlg, fg_color=("gray96", BG_CARD))
+        scroll.pack(fill="both", expand=True, padx=14, pady=10)
 
         # Table Header
-        th = ctk.CTkFrame(scroll, fg_color=(BRAND_BLUE, "#1E3A8A"), corner_radius=4)
-        th.pack(fill="x", pady=(0, 6))
+        th = ctk.CTkFrame(scroll, fg_color=(BRAND_BLUE, "#1E3A8A"), corner_radius=6)
+        th.pack(fill="x", pady=(0, 8))
         ctk.CTkLabel(th, text="اسم المعرض / الفرع", font=ctk.CTkFont(APP_FONT, 11, "bold"), text_color="white").pack(side="right", padx=14, pady=5)
         ctk.CTkLabel(th, text="نوع الفرع", font=ctk.CTkFont(APP_FONT, 11, "bold"), text_color="white").pack(side="left", padx=45, pady=5)
 
@@ -1227,7 +1291,7 @@ class OdooReportApp(ctk.CTk):
 
         dlg = ctk.CTkToplevel(self)
         dlg.title("🏢 إعدادات بيانات وشعار الشركة للمطبوعات الرسمية")
-        dlg.geometry("560x650")
+        dlg.geometry("580x670")
         dlg.resizable(False, False)
         dlg.transient(self)
         dlg.grab_set()
@@ -1235,15 +1299,15 @@ class OdooReportApp(ctk.CTk):
         dlg.focus_force()
 
         # Header
-        hdr = ctk.CTkFrame(dlg, fg_color=(BRAND_BLUE, "#0F1E33"), height=60, corner_radius=0)
+        hdr = ctk.CTkFrame(dlg, fg_color=HDR_BG, height=62, corner_radius=0)
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
 
-        accent = ctk.CTkFrame(hdr, fg_color=BRAND_GOLD, width=6, corner_radius=0)
+        accent = ctk.CTkFrame(hdr, fg_color=BRAND_GOLD, width=4, corner_radius=0)
         accent.pack(side="right", fill="y")
 
         hdr_content = ctk.CTkFrame(hdr, fg_color="transparent")
-        hdr_content.pack(side="right", fill="both", expand=True, padx=14, pady=8)
+        hdr_content.pack(side="right", fill="both", expand=True, padx=16, pady=10)
 
         ctk.CTkLabel(hdr_content, text="🏢  بيانات وشعار الشركة للمطبوعات الرسمية",
                      font=ctk.CTkFont(APP_FONT, 14, "bold"), text_color="white").pack(anchor="e")
@@ -1351,8 +1415,8 @@ class OdooReportApp(ctk.CTk):
 
         # 1. Care Showrooms section
         if care_showrooms:
-            care_header = ctk.CTkFrame(self._sh_scroll, fg_color=("#D1F2EB", "#0E3A36"), corner_radius=6)
-            care_header.pack(fill="x", padx=6, pady=(4, 6))
+            care_header = ctk.CTkFrame(self._sh_scroll, fg_color=("#D1F2EB", "#0E3A36"), corner_radius=8)
+            care_header.pack(fill="x", padx=6, pady=(4, 8))
             ctk.CTkLabel(care_header, text=f"🌿  فروع ومراكز العناية ({len(care_showrooms)} فروع) — تظهر بخلفية فيروزية في التقرير",
                          font=ctk.CTkFont(APP_FONT, 12, "bold"), text_color=("#0E6251", "#76D7C4")).pack(anchor="e", padx=12, pady=6)
 
@@ -1376,8 +1440,8 @@ class OdooReportApp(ctk.CTk):
 
         # 2. Standard Showrooms section
         if std_showrooms:
-            std_header = ctk.CTkFrame(self._sh_scroll, fg_color=("gray85", "#1B2A3D"), corner_radius=6)
-            std_header.pack(fill="x", padx=6, pady=(4, 6))
+            std_header = ctk.CTkFrame(self._sh_scroll, fg_color=("gray88", "#1B2A3D"), corner_radius=8)
+            std_header.pack(fill="x", padx=6, pady=(4, 8))
             ctk.CTkLabel(std_header, text=f"🏬  المعارض الرئيسية ({len(std_showrooms)} معرض)",
                          font=ctk.CTkFont(APP_FONT, 12, "bold"), text_color=BRAND_BLUE).pack(anchor="e", padx=12, pady=6)
 
