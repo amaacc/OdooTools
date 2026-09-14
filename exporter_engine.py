@@ -708,6 +708,61 @@ def generate_report(
     # ═════════════════════════════════════════════════════════════════════════
     notify(44, f"جاري جلب بيانات الموردين والمخزون والمبيعات بالتوازي لـ {total_filtered:,} صنف...")
 
+    def _fetch_po_purchases():
+        if not filtered_product_ids:
+            return {}
+        fields = ['product_id', 'partner_id', 'price_unit', 'discount',
+                  'date_approve', 'date_order', 'product_qty', 'qty_received']
+
+        def _get_po_chunk(chunk):
+            mt = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
+            return safe_execute_kw(
+                mt, db, uid, password, 'purchase.order.line', 'search_read',
+                [[['product_id', 'in', chunk],
+                  ['state', 'in', ['purchase', 'done']],
+                  ['price_unit', '>', 0]]],
+                {'fields': fields,
+                 'order': 'date_approve desc, date_order desc, id desc'}
+            )
+
+        if len(filtered_product_ids) <= 2000:
+            m = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
+            lines = safe_execute_kw(
+                m, db, uid, password, 'purchase.order.line', 'search_read',
+                [[['product_id', 'in', filtered_product_ids],
+                  ['state', 'in', ['purchase', 'done']],
+                  ['price_unit', '>', 0]]],
+                {'fields': fields,
+                 'order': 'date_approve desc, date_order desc, id desc'}
+            )
+        else:
+            chunks = [filtered_product_ids[i:i+2000] for i in range(0, len(filtered_product_ids), 2000)]
+            lines = []
+            with ThreadPoolExecutor(max_workers=6) as ex:
+                for chunk_res in ex.map(_get_po_chunk, chunks):
+                    lines.extend(chunk_res)
+
+        po_map = {}
+        for l in lines:
+            if not l.get('product_id'):
+                continue
+            pid = l['product_id'][0] if isinstance(l['product_id'], (list, tuple)) else l['product_id']
+            if pid not in po_map:
+                price_u = float(l.get('price_unit') or 0.0)
+                disc = float(l.get('discount') or 0.0)
+                disc_price = round(price_u * (1.0 - (disc / 100.0)), 4)
+                dt_val = str(l.get('date_approve') or l.get('date_order') or '')
+                po_map[pid] = {
+                    'vendor_name':            l['partner_id'][1] if l.get('partner_id') else '',
+                    'vendor_price':           price_u,
+                    'vendor_discount':        disc,
+                    'vendor_discounted_price':disc_price,
+                    'vendor_last_purchase':   dt_val[:10] if dt_val else '',
+                    'vendor_last_updated':    dt_val[:10] if dt_val else '',
+                    'last_received_qty':      float(l.get('qty_received') or l.get('product_qty') or 0.0),
+                }
+        return po_map
+
     def _fetch_vendors():
         if not filtered_tmpl_ids:
             return {}
@@ -717,7 +772,7 @@ def generate_report(
                                   [[['product_tmpl_id', 'in', filtered_tmpl_ids]]],
                                   {'fields': ['product_tmpl_id', 'partner_id', 'price', 'discount',
                                               'price_discounted', 'last_purchase_date', 'write_date'],
-                                   'order': 'sequence asc, id asc'})
+                                   'order': 'last_purchase_date desc, write_date desc, id desc'})
         else:
             def _get_sup_chunk(chunk):
                 mt = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
@@ -725,7 +780,7 @@ def generate_report(
                                        [[['product_tmpl_id', 'in', chunk]]],
                                        {'fields': ['product_tmpl_id', 'partner_id', 'price', 'discount',
                                                    'price_discounted', 'last_purchase_date', 'write_date'],
-                                        'order': 'sequence asc, id asc'})
+                                        'order': 'last_purchase_date desc, write_date desc, id desc'})
             chunks = [filtered_tmpl_ids[i:i+2500] for i in range(0, len(filtered_tmpl_ids), 2500)]
             sup = []
             with ThreadPoolExecutor(max_workers=6) as ex:
@@ -733,6 +788,23 @@ def generate_report(
                     sup.extend(chunk_res)
 
         vmap = {}
+        # First pass: prefer records with non-zero price (avoid 0.0 bonus records)
+        for s in sup:
+            if not s.get('product_tmpl_id'):
+                continue
+            tid = s['product_tmpl_id'][0] if isinstance(s['product_tmpl_id'], (list, tuple)) else s['product_tmpl_id']
+            p_val = float(s.get('price') or 0.0)
+            dp_val = float(s.get('price_discounted') or 0.0)
+            if (p_val > 0 or dp_val > 0) and tid not in vmap:
+                vmap[tid] = {
+                    'vendor_name':            s['partner_id'][1] if s.get('partner_id') else '',
+                    'vendor_price':           p_val,
+                    'vendor_discount':        float(s.get('discount') or 0.0),
+                    'vendor_discounted_price':dp_val,
+                    'vendor_last_purchase':   str(s.get('last_purchase_date') or ''),
+                    'vendor_last_updated':    str(s.get('write_date') or ''),
+                }
+        # Second pass: fallback for any remaining templates without non-zero price
         for s in sup:
             if not s.get('product_tmpl_id'):
                 continue
@@ -826,12 +898,14 @@ def generate_report(
         return s['id'], {r['product_id'][0]: float(r.get('product_qty') or 0.0)
                          for r in res if r.get('product_id')}
 
-    with ThreadPoolExecutor(max_workers=6 + len(target_showrooms)) as ex:
-        f_vendors  = ex.submit(_fetch_vendors)
-        f_last_rcv = ex.submit(_fetch_last_received)
-        f_quants   = ex.submit(_fetch_quants)
-        pos_futures = {ex.submit(_fetch_pos_sales_for, s): s['id'] for s in target_showrooms}
+    with ThreadPoolExecutor(max_workers=7 + len(target_showrooms)) as ex:
+        f_po_vendors = ex.submit(_fetch_po_purchases)
+        f_vendors    = ex.submit(_fetch_vendors)
+        f_last_rcv   = ex.submit(_fetch_last_received)
+        f_quants     = ex.submit(_fetch_quants)
+        pos_futures  = {ex.submit(_fetch_pos_sales_for, s): s['id'] for s in target_showrooms}
 
+    po_vendor_map     = f_po_vendors.result()
     vendor_tmpl_map   = f_vendors.result()
     last_received_map = f_last_rcv.result()
     stock_map         = f_quants.result()
@@ -941,8 +1015,15 @@ def generate_report(
         qty_oh     = float(r.get('qty_available') or 0.0)
         total_sold = float(r.get('sales_count') or 0.0)
 
-        v_info = vendor_tmpl_map.get(tid, {})
-        last_rcv_qty = last_received_map.get(pid, 0.0)
+        # Resolve vendor info & last purchase data:
+        # 1. Authoritative: Live confirmed purchase orders with value > 0 (not zero/bonus)
+        # 2. Fallback: product.supplierinfo sorted by latest purchase date with value > 0
+        if pid in po_vendor_map:
+            v_info = po_vendor_map[pid]
+            last_rcv_qty = v_info.get('last_received_qty', 0.0)
+        else:
+            v_info = vendor_tmpl_map.get(tid, {})
+            last_rcv_qty = last_received_map.get(pid, 0.0)
 
         # Actual Cost: Discounted Price if > 0, else Cost
         v_disc_price = float(v_info.get('vendor_discounted_price') or 0.0)

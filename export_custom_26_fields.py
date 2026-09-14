@@ -233,10 +233,11 @@ def run_export():
         if tid not in tmpl_ids:
             tmpl_ids.append(tid)
 
-    # Vendor Info
+    # Vendor Info (product.supplierinfo)
     supplier_ids = safe_execute_kw(
         models, db, uid, password, 'product.supplierinfo', 'search',
-        [[['product_tmpl_id', 'in', tmpl_ids]]]
+        [[['product_tmpl_id', 'in', tmpl_ids]]],
+        {'order': 'last_purchase_date desc, write_date desc, id desc'}
     )
     print(f"Found {len(supplier_ids)} supplier records.", flush=True)
 
@@ -249,6 +250,24 @@ def run_export():
             [sup_chunk],
             {'fields': ['product_tmpl_id', 'partner_id', 'price', 'discount', 'price_discounted', 'last_purchase_date', 'write_date']}
         )
+        for s in suppliers:
+            if not s.get('product_tmpl_id'):
+                continue
+            tid = s['product_tmpl_id'][0] if isinstance(s['product_tmpl_id'], (list, tuple)) else s['product_tmpl_id']
+            p_val = float(s.get('price') or 0.0)
+            dp_val = float(s.get('price_discounted') or 0.0)
+            if (p_val > 0 or dp_val > 0) and tid not in vendor_tmpl_map:
+                raw_p_name = s['partner_id'][1] if s.get('partner_id') else ''
+                v_code, v_name = parse_vendor_info(raw_p_name)
+                vendor_tmpl_map[tid] = {
+                    'vendor_code': v_code,
+                    'vendor_name': v_name,
+                    'vendor_price': p_val,
+                    'vendor_discount': float(s.get('discount') or 0.0),
+                    'vendor_discounted_price': dp_val,
+                    'vendor_last_purchase': str(s.get('last_purchase_date') or ''),
+                    'vendor_last_updated': str(s.get('write_date') or '')
+                }
         for s in suppliers:
             if not s.get('product_tmpl_id'):
                 continue
@@ -266,12 +285,15 @@ def run_export():
                     'vendor_last_updated': str(s.get('write_date') or '')
                 }
 
-    # Last Received Qty from Purchase Orders
+    # Live Purchase Orders with value > 0 (excluding 0 / bonus)
     all_po_line_ids = safe_execute_kw(
         models, db, uid, password, 'purchase.order.line', 'search',
-        [[['product_id', 'in', product_ids], ['order_id.state', 'in', ['purchase', 'done']]]],
-        {'order': 'date_approve asc'}
+        [[['product_id', 'in', product_ids],
+          ['order_id.state', 'in', ['purchase', 'done']],
+          ['price_unit', '>', 0]]],
+        {'order': 'date_approve desc, date_order desc, id desc'}
     )
+    po_vendor_map = {}
     last_received_map = {}
     po_batch = 5000
     for j in range(0, len(all_po_line_ids), po_batch):
@@ -279,11 +301,31 @@ def run_export():
         po_lines = safe_execute_kw(
             models, db, uid, password, 'purchase.order.line', 'read',
             [po_chunk],
-            {'fields': ['product_id', 'qty_received']}
+            {'fields': ['product_id', 'partner_id', 'price_unit', 'discount', 'date_approve', 'date_order', 'product_qty', 'qty_received']}
         )
         for line in po_lines:
-            if line.get('product_id'):
-                last_received_map[line['product_id'][0]] = float(line.get('qty_received') or 0.0)
+            if not line.get('product_id'):
+                continue
+            pid = line['product_id'][0]
+            if pid not in po_vendor_map:
+                p_unit = float(line.get('price_unit') or 0.0)
+                disc = float(line.get('discount') or 0.0)
+                disc_p = round(p_unit * (1.0 - (disc / 100.0)), 4)
+                dt = str(line.get('date_approve') or line.get('date_order') or '')
+                raw_p_name = line['partner_id'][1] if line.get('partner_id') else ''
+                v_code, v_name = parse_vendor_info(raw_p_name)
+                qty_rcv = float(line.get('qty_received') or line.get('product_qty') or 0.0)
+                po_vendor_map[pid] = {
+                    'vendor_code': v_code,
+                    'vendor_name': v_name,
+                    'vendor_price': p_unit,
+                    'vendor_discount': disc,
+                    'vendor_discounted_price': disc_p,
+                    'vendor_last_purchase': dt[:10] if dt else '',
+                    'vendor_last_updated': dt[:10] if dt else '',
+                    'last_received_qty': qty_rcv
+                }
+                last_received_map[pid] = qty_rcv
 
     print(f"Vendor & Purchase data ready in {round(time.time()-t0, 2)}s", flush=True)
 
@@ -335,7 +377,7 @@ def run_export():
             if not tags_str and r.get('x_studio_concatenated_tags'):
                 tags_str = str(r.get('x_studio_concatenated_tags'))
 
-            vinfo = vendor_tmpl_map.get(tid, {})
+            vinfo = po_vendor_map.get(pid) or vendor_tmpl_map.get(tid, {})
             sales_price = float(r.get('list_price') or 0.0)
 
             # Compute Shati Price
