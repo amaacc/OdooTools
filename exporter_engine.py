@@ -1,7 +1,7 @@
 """
 exporter_engine.py — High-Performance Multi-Threaded Odoo Report Engine
 Designed by: عبدالله الخطيب (Abdullah Al-Khatib)
-Version: v1.02 (High-Performance Turbo Edition)
+Version: v1.00 (Standard Production Edition)
 
 OPTIMIZATION ARCHITECTURE:
   Phase 1 — Parallel global lookups (taxes, tags, packages, pricelist, showrooms)

@@ -1,9 +1,9 @@
 """
-OdooReportExporter – Main GUI (v1.08)
+OdooReportExporter – Main GUI (v1.00 Standard)
 Designed & developed by: عبدالله الخطيب (Abdullah Al-Khatib)
 """
 
-APP_VERSION = "v1.08"
+APP_VERSION = "v1.00"
 
 import os
 import sys
