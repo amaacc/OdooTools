@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary">#1565C0</color>
+    <color name="primary_dark">#0D47A1</color>
+    <color name="accent">#FF6F00</color>
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
+    <color name="scan_ready_bg">#F5F5F5</color>
+    <color name="price_found_bg">#2E7D32</color>
+    <color name="price_found_bg_light">#43A047</color>
+    <color name="mismatch_bg">#C62828</color>
+    <color name="mismatch_bg_light">#E53935</color>
+    <color name="not_found_bg">#E65100</color>
+    <color name="not_found_bg_light">#EF6C00</color>
+    <color name="added_bg">#B71C1C</color>
+    <color name="bottom_bar_bg">#263238</color>
+    <color name="bottom_bar_text">#B0BEC5</color>
+</resources>

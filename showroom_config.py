@@ -9,6 +9,8 @@ import json
 
 DEFAULT_CARE_KEYWORDS = ["الصفاء", "الصفا", "الطايف", "الطائف", "الحمدانية", "الحمدانيه", "سوق الشاطئ", "الشاطئ", "الشاطي"]
 DEFAULT_CARE_CODES = ["106", "118", "120", "128"]
+DEFAULT_WAREHOUSE_CODES = ["JEDMK", "JEDPE", "JEDHA", "RIY"]
+DEFAULT_WAREHOUSE_KEYWORDS = ["مستودع"]
 
 def _get_config_path():
     appdata = os.environ.get("APPDATA") or os.path.expanduser("~")
@@ -31,9 +33,20 @@ def is_default_care_showroom(code, name):
             return True
     return False
 
+def is_default_warehouse(code, name):
+    """Check if a warehouse code/name matches known warehouse patterns."""
+    c_str = str(code or '').strip()
+    n_str = str(name or '').strip()
+    if c_str in DEFAULT_WAREHOUSE_CODES:
+        return True
+    for kw in DEFAULT_WAREHOUSE_KEYWORDS:
+        if kw in n_str:
+            return True
+    return False
+
 def load_showroom_types():
     """
-    Returns dict mapping showroom key (e.g. str(code) or str(id) or name) to 'care' or 'showroom'.
+    Returns dict mapping showroom key (e.g. str(code) or str(id) or name) to 'care', 'showroom', or 'warehouse'.
     """
     for path in [_get_config_path(), _get_local_config_path()]:
         if os.path.exists(path):
@@ -64,7 +77,7 @@ def save_showroom_types(types_dict):
 
 def get_showroom_category(s_code, s_name, custom_types_map=None):
     """
-    Returns 'care' or 'showroom'.
+    Returns 'care', 'showroom', or 'warehouse'.
     """
     if custom_types_map is None:
         custom_types_map = load_showroom_types()
@@ -79,6 +92,9 @@ def get_showroom_category(s_code, s_name, custom_types_map=None):
         return custom_types_map[n_str]
 
     # Fallback to default detection
+    if is_default_warehouse(c_str, n_str):
+        return "warehouse"
     if is_default_care_showroom(c_str, n_str):
         return "care"
     return "showroom"
+

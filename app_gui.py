@@ -9,6 +9,7 @@ import os
 import sys
 import json
 import threading
+import subprocess
 from datetime import datetime, timedelta
 
 import tkinter as tk
@@ -16,10 +17,16 @@ from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 
-from licensing import get_machine_id, is_activated, activate_device
-from permissions import ALL_PROTECTED_FIELDS, load_permissions, save_permissions, verify_admin_password
-from exporter_engine import get_active_showrooms, get_all_product_tags, get_all_pricelists, generate_report
+from licensing import (
+    get_machine_id, is_activated, activate_device, deactivate_device,
+    register_or_update_device_in_odoo, fetch_device_status_from_odoo,
+    show_device_license_dialog
+)
+from permissions import ALL_PROTECTED_FIELDS, load_permissions, save_permissions, verify_admin_password, sync_permissions_from_odoo
+from auto_updater import check_and_prompt_update_async
+from exporter_engine import get_active_showrooms, get_all_warehouses, get_all_product_tags, get_all_pricelists, generate_report
 from pos_discount_engine import generate_pos_discount_report
+from purchase_report_engine import get_all_vendors, generate_purchase_intelligence_report
 from showroom_config import get_showroom_category, load_showroom_types, save_showroom_types, is_default_care_showroom
 
 
@@ -142,25 +149,36 @@ class TagMultiSelect(ctk.CTkFrame):
     A tag/chip selector with live autocomplete search.
     Tags are loaded from Odoo. Selected tags shown as removable chips.
     """
-    def __init__(self, master, tags_list=None, **kwargs):
+    def __init__(self, master, tags_list=None, placeholder_text=None, empty_text=None, chips_height=130, chip_color=BRAND_BLUE, **kwargs):
         super().__init__(master, **kwargs)
         self._all_tags = self._extract_tag_names(tags_list)
         self._selected = []
         self._dropdown_open = False
         self._dropdown_items = []
+        self._empty_text = empty_text or "لا توجد وسوم محددة بعد"
+        self._chip_color = chip_color
 
         # ─ Top: search entry ─
         top = ctk.CTkFrame(self, fg_color="transparent")
         top.pack(fill="x", padx=0, pady=0)
 
-        self._entry = ctk.CTkEntry(top, placeholder_text="ابحث عن وسم... (اكتب للبحث أو اضغط مسافة للاختيار)",
-                                   height=36, font=ctk.CTkFont(APP_FONT, 12))
+        self._entry = ctk.CTkEntry(
+            top,
+            placeholder_text=placeholder_text or "ابحث عن وسم... (اكتب للبحث أو اضغط Enter / مسافة للاختيار)",
+            height=36,
+            font=ctk.CTkFont(APP_FONT, 12)
+        )
         self._entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
         self._entry.bind("<KeyRelease>", self._on_key)
         self._entry.bind("<space>", self._on_space)
+        self._entry.bind("<Return>", self._on_enter)
         self._entry.bind("<FocusIn>", self._on_key)
 
-        ctk.CTkButton(top, text="✕ مسح الكل", width=90, height=36,
+        ctk.CTkButton(top, text="➕ إضافة", width=72, height=36,
+                      fg_color=self._chip_color, hover_color=BRAND_BLUE_HOVER,
+                      font=ctk.CTkFont(APP_FONT, 11, "bold"), command=self._on_enter).pack(side="left", padx=(0, 4))
+
+        ctk.CTkButton(top, text="✕ مسح الكل", width=85, height=36,
                       fg_color=BRAND_SLATE, hover_color=BRAND_SLATE_HOVER,
                       font=ctk.CTkFont(APP_FONT, 11), command=self._clear_all).pack(side="left")
 
@@ -168,15 +186,15 @@ class TagMultiSelect(ctk.CTkFrame):
         self._dropdown_container = ctk.CTkFrame(self, fg_color="transparent")
         self._dropdown_container.pack(fill="x")
 
-        self._dropdown_frame = ctk.CTkScrollableFrame(self._dropdown_container, height=140, fg_color=("white", "#1E293B"),
+        self._dropdown_frame = ctk.CTkScrollableFrame(self._dropdown_container, height=110, fg_color=("white", "#1E293B"),
                                                       border_width=1, border_color=("#CBD5E1", "#334155"),
                                                       corner_radius=6)
 
         # ─ Chips area ─
-        self._chips_frame = ctk.CTkScrollableFrame(self, height=80, orientation="horizontal",
+        self._chips_frame = ctk.CTkScrollableFrame(self, height=chips_height, orientation="horizontal",
                                                    fg_color=("gray93", "#1A2230"),
                                                    corner_radius=6)
-        self._chips_frame.pack(fill="x", pady=(6, 0))
+        self._chips_frame.pack(fill="both", expand=True, pady=(4, 0))
 
         self._redraw_chips()
 
@@ -195,31 +213,83 @@ class TagMultiSelect(ctk.CTkFrame):
         return sorted(cleaned, key=lambda s: s.lower())
 
     def _on_key(self, event=None):
-        text = self._entry.get().strip().lower().rstrip(" ")
-        if not text:
+        if event and getattr(event, "keysym", "") in ("Return", "Escape"):
+            return
+        raw_text = self._entry.get().strip().rstrip(" ")
+        if not raw_text:
             self._hide_dropdown()
             return
-        matches = [t for t in self._all_tags if text in t.lower() and t not in self._selected][:40]
-        if matches:
-            self._refresh_dropdown(matches)
+        last_tok = raw_text.replace("،", ",").split(",")[-1].strip()
+        if not last_tok:
+            self._hide_dropdown()
+            return
+        stem = last_tok.replace("*", "").replace("?", "").strip().lower()
+        matches = []
+        if stem:
+            matches = [
+                t for t in self._all_tags
+                if (stem in t.lower() or stem in t.lower().replace("[", "").replace("]", ""))
+                and t not in self._selected
+            ][:40]
+        if matches or ("*" in last_tok or "?" in last_tok):
+            self._refresh_dropdown(matches, wildcard_token=last_tok if ("*" in last_tok or "?" in last_tok or "," in raw_text or "،" in raw_text) else None)
             self._show_dropdown()
         else:
             self._hide_dropdown()
 
+    def _on_enter(self, event=None):
+        """Add typed token(s) or wildcard pattern(s) directly as chips when pressing Enter or clicking Add."""
+        raw_text = self._entry.get().strip()
+        if not raw_text:
+            return "break"
+        tokens = [t.strip() for t in raw_text.replace("،", ",").split(",") if t.strip()]
+        for tok in tokens:
+            if "*" in tok or "?" in tok or len(tokens) > 1:
+                if tok not in self._selected:
+                    self._selected.append(tok)
+            else:
+                exact = [t for t in self._all_tags if t.lower() == tok.lower() and t not in self._selected]
+                if exact:
+                    self._selected.append(exact[0])
+                elif tok not in self._selected:
+                    self._selected.append(tok)
+        self._redraw_chips()
+        self._entry.delete(0, "end")
+        self._hide_dropdown()
+        return "break"
+
     def _on_space(self, event=None):
-        """Auto-select the first matching tag on space press."""
+        """Auto-select matching tag or add wildcard/comma pattern on space press."""
         text = self._entry.get().strip().rstrip(" ")
         if not text:
             return
+        if any(ch in text for ch in ("*", "?", ",", "،")):
+            return self._on_enter(event)
         matches = [t for t in self._all_tags if text.lower() in t.lower() and t not in self._selected]
         if matches:
             self._add_tag(matches[0])
+        else:
+            self._add_tag(text)
         return "break"  # prevent space insertion
 
-    def _refresh_dropdown(self, items):
+    def _refresh_dropdown(self, items, wildcard_token=None):
         for w in self._dropdown_frame.winfo_children():
             w.destroy()
         self._dropdown_items = []
+        if wildcard_token:
+            raw_all = self._entry.get().strip()
+            w_btn = ctk.CTkButton(
+                self._dropdown_frame,
+                text=f"➕ اعتماد الفلتر المخصص: {raw_all}  (أو اضغط Enter)",
+                height=30, anchor="e",
+                font=ctk.CTkFont(APP_FONT, 11, "bold"),
+                fg_color=(BRAND_EMERALD + "22", BRAND_EMERALD + "33"),
+                hover_color=(BRAND_EMERALD + "44", BRAND_EMERALD + "66"),
+                text_color=(BRAND_EMERALD, "#34D399"),
+                command=self._on_enter
+            )
+            w_btn.pack(fill="x", padx=4, pady=(2, 3))
+            self._dropdown_items.append(w_btn)
         for tag_name in items:
             btn = ctk.CTkButton(self._dropdown_frame, text=tag_name,
                                 height=28, anchor="e",
@@ -257,11 +327,11 @@ class TagMultiSelect(ctk.CTkFrame):
         for w in self._chips_frame.winfo_children():
             w.destroy()
         if not self._selected:
-            ctk.CTkLabel(self._chips_frame, text="لا توجد وسوم محددة بعد",
+            ctk.CTkLabel(self._chips_frame, text=self._empty_text,
                          text_color=BRAND_SLATE, font=ctk.CTkFont(APP_FONT, 11)).pack(side="right", padx=6)
             return
         for tag_name in self._selected:
-            chip = ctk.CTkFrame(self._chips_frame, fg_color=(BRAND_BLUE, BRAND_BLUE),
+            chip = ctk.CTkFrame(self._chips_frame, fg_color=(self._chip_color, self._chip_color),
                                 corner_radius=14, height=30)
             chip.pack(side="right", padx=4, pady=4)
             chip.pack_propagate(False)
@@ -284,8 +354,15 @@ class TagMultiSelect(ctk.CTkFrame):
         self._hide_dropdown()
 
     def get_selected_tags(self):
-        """Returns comma-separated string of selected tags."""
-        return ", ".join(self._selected) if self._selected else None
+        """Returns comma-separated string of selected tags AND any pending text typed in the entry field."""
+        combined = list(self._selected)
+        raw_entry = self._entry.get().strip()
+        if raw_entry:
+            for tok in raw_entry.replace("،", ",").split(","):
+                t = tok.strip()
+                if t and t not in combined:
+                    combined.append(t)
+        return ", ".join(combined) if combined else None
 
     def set_tags_list(self, tags_list):
         """Update available tags list (after fetching from Odoo)."""
@@ -308,13 +385,13 @@ class SectionCard(ctk.CTkFrame):
 
         if title:
             header = ctk.CTkFrame(self, fg_color="transparent")
-            header.pack(fill="x", padx=16, pady=(12, 0))
+            header.pack(fill="x", padx=14, pady=(10, 0))
             ctk.CTkLabel(header, text=f"{icon}  {title}" if icon else title,
-                         font=ctk.CTkFont(APP_FONT, 14, "bold"),
+                         font=ctk.CTkFont(APP_FONT, 13, "bold"),
                          text_color=(BRAND_BLUE, BRAND_BLUE_GLOW)).pack(side="right")
 
         self.content = ctk.CTkFrame(self, fg_color="transparent")
-        self.content.pack(fill="both", expand=True, padx=16, pady=(8, 14))
+        self.content.pack(fill="both", expand=True, padx=14, pady=(6, 10))
 
 
 # ─────────────────────────────────────────────────────────
@@ -333,8 +410,11 @@ class OdooReportApp(ctk.CTk):
         self.minsize(960, 580)
 
         self.showrooms = []
+        self.warehouses = []
         self.all_tags = []
+        self.all_vendors = []
         self.showroom_vars = {}
+        self.warehouse_vars = {}
         self.is_exporting = False
         self.last_exported_file = None
         self.last_exported_pdf = None
@@ -420,14 +500,29 @@ class OdooReportApp(ctk.CTk):
         ctk.CTkLabel(mid_box, text="انسخ المعرّف أعلاه وأرسله للمسؤول (الأستاذ عبدالله الخطيب) للحصول على مفتاح التفعيل.",
                      font=ctk.CTkFont(APP_FONT, 10), text_color=BRAND_SLATE).pack(anchor="e", padx=16, pady=(0, 10))
 
-        # 2. Activation Key Entry Section
+        # 2. Device Name Section (Optional description for Odoo registry)
+        name_box = ctk.CTkFrame(card, fg_color="transparent")
+        name_box.pack(fill="x", padx=24, pady=(0, 10))
+
+        ctk.CTkLabel(name_box, text="🏢 اسم المعرض / الموظف / المحطة (للتعريف في Odoo):",
+                     font=ctk.CTkFont(APP_FONT, 11, "bold")).pack(anchor="e", pady=(0, 4))
+
+        self._dev_name_entry = ctk.CTkEntry(name_box, placeholder_text="مثال: إدارة المشتريات - لابتوب 1",
+                                            font=ctk.CTkFont(APP_FONT, 12), justify="right", height=38,
+                                            corner_radius=8)
+        default_dname = os.environ.get("COMPUTERNAME", "")
+        if default_dname:
+            self._dev_name_entry.insert(0, f"جهاز ({default_dname})")
+        self._dev_name_entry.pack(fill="x")
+
+        # 3. Activation Key Entry Section
         key_box = ctk.CTkFrame(card, fg_color="transparent")
         key_box.pack(fill="x", padx=24, pady=(0, 12))
 
         ctk.CTkLabel(key_box, text="🔑 أدخل مفتاح التفعيل (Activation Key):",
                      font=ctk.CTkFont(APP_FONT, 12, "bold")).pack(anchor="e", pady=(0, 6))
 
-        self._act_entry = ctk.CTkEntry(key_box, placeholder_text="XXXX-XXXX-XXXX-XXXX",
+        self._act_entry = ctk.CTkEntry(key_box, placeholder_text="XXXX-XXXX-XXXX-XXXX (بشرطات أو بدون)",
                                        font=ctk.CTkFont("Consolas", 15, "bold"), justify="center", height=44,
                                        corner_radius=8)
         self._act_entry.pack(fill="x", pady=(0, 12))
@@ -454,9 +549,10 @@ class OdooReportApp(ctk.CTk):
         if not key:
             messagebox.showwarning("تنبيه", "يرجى إدخال مفتاح التفعيل أولاً.")
             return
-        ok, msg = activate_device(key)
+        d_name = self._dev_name_entry.get().strip() if hasattr(self, '_dev_name_entry') else ""
+        ok, msg = activate_device(key, device_name=d_name, app_name="OdooReportExporter", app_version=APP_VERSION)
         if ok:
-            messagebox.showinfo("نجاح التفعيل", "🎉 تم تفعيل البرنامج بنجاح لهذا الجهاز!\n\nيمكنك الآن استخدام كافة ميزات البرنامج.")
+            messagebox.showinfo("نجاح التفعيل", "🎉 تم تفعيل البرنامج بنجاح لهذا الجهاز!\nتم تسجيل الجهاز في نظام التراخيص المركزي Odoo.")
             self._center_window(1120, 720)
             self.resizable(True, True)
             self._build_main_ui()
@@ -477,21 +573,96 @@ class OdooReportApp(ctk.CTk):
         # ─── TOP HEADER BAR ───────────────────────────────────
         self._build_header(main_container)
 
+        # ─── BOTTOM PROGRESS & ACTION BAR (built BEFORE content so pack side=bottom gets space) ───
+        self._build_footer(main_container)
+
         # ─── CONTENT AREA (Sidebar + Tabs) ────────────────────
         content = ctk.CTkFrame(main_container, fg_color="transparent")
-        content.pack(fill="both", expand=True, padx=12, pady=(0, 6))
+        content.pack(fill="both", expand=True, padx=10, pady=(0, 4))
 
         # Build sidebar + tabview side by side
         self._build_sidebar(content)
         self._build_tabs(content)
 
-        # ─── BOTTOM PROGRESS & ACTION BAR ─────────────────────
-        self._build_footer(main_container)
+        # Check authorization with central Odoo registry in background
+        self._check_device_status_with_odoo()
 
         # Async loads
         self._load_showrooms_async()
         self._load_tags_async()
+        self._load_vendors_async()
         self._load_pricelists_async()
+
+    def _check_device_status_with_odoo(self):
+        """Checks if device is authorized in Odoo registry. Only shows sync button if NOT added."""
+        def worker():
+            try:
+                st = fetch_device_status_from_odoo()
+                if st == "blocked":
+                    self.after(0, self._handle_remote_device_blocked)
+                elif st == "not_found":
+                    # Device is NOT in Odoo -> show warning sync button
+                    self.after(0, self._show_license_sync_button)
+                elif st == "active":
+                    # Device is ALREADY licensed in Odoo -> ensure button is hidden & update heartbeat
+                    self.after(0, self._hide_license_sync_button)
+                    register_or_update_device_in_odoo(
+                        app_name="OdooReportExporter",
+                        app_version=APP_VERSION
+                    )
+                    # Sync remote permissions and admin password set by Abdullah Al-Khatib
+                    updated, new_perms = sync_permissions_from_odoo()
+                    if updated:
+                        self.permissions = new_perms
+                        self.after(0, self._refresh_permission_buttons)
+
+                    # Check for updates in background
+                    check_and_prompt_update_async(self, "OdooReportExporter", APP_VERSION)
+            except Exception:
+                pass
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _refresh_permission_buttons(self):
+        """Refreshes buttons gated by permissions like Price Comparator."""
+        try:
+            has_comparator = self.permissions.get("Price_Comparator", False)
+            comp_text = "🎯  مساعد التسعير والمنافسين" if has_comparator else "🔒  مساعد التسعير (مقفل)"
+            comp_fg = (BRAND_GREEN, "#059669") if has_comparator else (BRAND_SLATE, "#334155")
+            comp_hover = (BRAND_GREEN_HOVER, "#047857") if has_comparator else (BRAND_SLATE_HOVER, "#1E293B")
+            if hasattr(self, '_btn_price_comparator') and self._btn_price_comparator.winfo_exists():
+                self._btn_price_comparator.configure(text=comp_text, fg_color=comp_fg, hover_color=comp_hover)
+        except Exception:
+            pass
+
+    def _show_license_sync_button(self):
+        if hasattr(self, '_btn_lic_sync') and self._btn_lic_sync.winfo_exists():
+            if not self._btn_lic_sync.winfo_ismapped():
+                if hasattr(self, '_btn_price_comparator') and self._btn_price_comparator.winfo_exists():
+                    self._btn_lic_sync.pack(side="left", padx=(0, 8), before=self._btn_price_comparator)
+                else:
+                    self._btn_lic_sync.pack(side="left", padx=(0, 8))
+
+    def _hide_license_sync_button(self):
+        if hasattr(self, '_btn_lic_sync') and self._btn_lic_sync.winfo_exists():
+            self._btn_lic_sync.pack_forget()
+
+    def _open_license_sync_dialog(self):
+        show_device_license_dialog(
+            self,
+            "OdooReportExporter",
+            APP_VERSION,
+            on_deactivate=self._build_activation_screen,
+            on_synced=self._hide_license_sync_button
+        )
+
+    def _handle_remote_device_blocked(self):
+        """Immediately terminates local activation when revoked remotely from Odoo."""
+        deactivate_device()
+        messagebox.showerror(
+            "🚫 تم إلغاء ترخيص هذا الجهاز",
+            "تم إنهاء وتجميد ترخيص هذا الجهاز من قبل إدارة النظام عبر Odoo.\nيرجى التواصل مع الإدارة لإعادة تفعيل الجهاز."
+        )
+        self._build_activation_screen()
 
     # ─── HEADER ───────────────────────────────────────────────
     def _build_header(self, parent):
@@ -504,25 +675,34 @@ class OdooReportApp(ctk.CTk):
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
 
-        # Right side: Company logo + name
+        # Right side: Company logo
         brand_frame = ctk.CTkFrame(hdr, fg_color="transparent")
-        brand_frame.pack(side="right", padx=16, pady=8)
+        brand_frame.pack(side="right", padx=16, pady=6)
 
-        # Try to load company logo
+        # Load official company logo
+        self._header_logo_img = None
         try:
-            logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "company_logo.png")
+            from company_profile import get_default_logo_path
+            from PIL import Image
+            logo_path = get_default_logo_path()
+            if not logo_path or not os.path.exists(logo_path):
+                logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "company_logo.png")
             if os.path.exists(logo_path):
-                from PIL import Image
-                logo_img = ctk.CTkImage(light_image=Image.open(logo_path),
-                                        dark_image=Image.open(logo_path),
-                                        size=(38, 38))
-                ctk.CTkLabel(brand_frame, image=logo_img, text="").pack(side="right", padx=(0, 8))
+                pil_img = Image.open(logo_path)
+                target_h = 44
+                target_w = int(target_h * (pil_img.width / pil_img.height))
+                self._header_logo_img = ctk.CTkImage(light_image=pil_img,
+                                                     dark_image=pil_img,
+                                                     size=(target_w, target_h))
+                ctk.CTkLabel(brand_frame, image=self._header_logo_img, text="").pack(side="right", padx=2)
+            else:
+                ctk.CTkLabel(brand_frame, text="العسلي التجارية",
+                             font=ctk.CTkFont(APP_FONT, 14, "bold"),
+                             text_color=BRAND_GOLD).pack(side="right")
         except Exception:
-            pass
-
-        ctk.CTkLabel(brand_frame, text="العسلي التجارية",
-                     font=ctk.CTkFont(APP_FONT, 13, "bold"),
-                     text_color=BRAND_GOLD).pack(side="right")
+            ctk.CTkLabel(brand_frame, text="العسلي التجارية",
+                         font=ctk.CTkFont(APP_FONT, 14, "bold"),
+                         text_color=BRAND_GOLD).pack(side="right")
 
         # Left controls
         ctrl_frame = ctk.CTkFrame(hdr, fg_color="transparent")
@@ -552,25 +732,76 @@ class OdooReportApp(ctk.CTk):
                       font=ctk.CTkFont(APP_FONT, 11, "bold"),
                       fg_color=BRAND_PURPLE, hover_color=BRAND_PURPLE_HOVER,
                       corner_radius=8,
-                      width=120, height=32,
-                      command=self._open_admin_dialog).pack(side="left")
+                      width=115, height=32,
+                      command=self._open_admin_dialog).pack(side="left", padx=(0, 8))
 
-        # Center: App title
+        # Device & Odoo License sync button (Hidden by default; surfaces ONLY if device is not in Odoo)
+        self._btn_lic_sync = ctk.CTkButton(
+            ctrl_frame,
+            text="⚠️  ترخيص الجهاز في Odoo",
+            font=ctk.CTkFont(APP_FONT, 11, "bold"),
+            fg_color=("#D97706", "#B45309"), hover_color="#92400E",
+            corner_radius=8,
+            width=160, height=32,
+            command=self._open_license_sync_dialog
+        )
+
+        # Price Comparator & Competitor Intelligence button (Gated by Permissions)
+        has_comparator = self.permissions.get("Price_Comparator", False)
+        comp_text = "🎯  مساعد التسعير والمنافسين" if has_comparator else "🔒  مساعد التسعير (مقفل)"
+        comp_fg = (BRAND_GREEN, "#059669") if has_comparator else (BRAND_SLATE, "#334155")
+        comp_hover = (BRAND_GREEN_HOVER, "#047857") if has_comparator else (BRAND_SLATE_HOVER, "#1E293B")
+
+        self._btn_price_comparator = ctk.CTkButton(
+            ctrl_frame,
+            text=comp_text,
+            font=ctk.CTkFont(APP_FONT, 11, "bold"),
+            fg_color=comp_fg,
+            hover_color=comp_hover,
+            corner_radius=8,
+            width=175, height=32,
+            command=self._launch_price_comparator
+        )
+        self._btn_price_comparator.pack(side="left")
+
+        # Center: App title, Developer credit, & 12h Clock
         title_frame = ctk.CTkFrame(hdr, fg_color="transparent")
         title_frame.place(relx=0.5, rely=0.5, anchor="center")
 
         ctk.CTkLabel(title_frame, text="📊  نظام تصدير تقارير منتجات ومعارض Odoo",
-                     font=ctk.CTkFont(APP_FONT, 17, "bold"),
-                     text_color=HDR_TITLE_COLOR).pack()
-        ctk.CTkLabel(title_frame,
-                     text=f"✨ تصميم وتطوير: عبدالله الخطيب  |  الإصدار {APP_VERSION}",
-                     font=ctk.CTkFont(APP_FONT, 10), text_color=BRAND_GOLD).pack()
+                     font=ctk.CTkFont(APP_FONT, 16, "bold"),
+                     text_color=HDR_TITLE_COLOR).pack(pady=(0, 2))
+
+        # Sub-header bar: Developer credit & 12h Clock (without seconds)
+        sub_bar = ctk.CTkFrame(title_frame, fg_color="transparent")
+        sub_bar.pack()
+
+        ctk.CTkLabel(sub_bar,
+                     text=f"{APP_VERSION} تصميم وتطوير: عبدالله الخطيب",
+                     font=ctk.CTkFont(APP_FONT, 11, "bold"),
+                     text_color=BRAND_GOLD).pack(side="right", padx=(0, 10))
+
+        ctk.CTkLabel(sub_bar,
+                     text="|",
+                     font=ctk.CTkFont(APP_FONT, 11),
+                     text_color=("#93C5FD", "#475569")).pack(side="right", padx=(0, 10))
+
+        now = datetime.now()
+        period = "ص" if now.hour < 12 else "م"
+        h = now.hour % 12 or 12
+        init_clock = f"📅 {now.strftime('%Y/%m/%d')}   ⏰ {h:02d}:{now.minute:02d} {period}"
+        self._hdr_clock = ctk.CTkLabel(sub_bar,
+                                       text=init_clock,
+                                       font=ctk.CTkFont(APP_FONT, 11, "bold"),
+                                       text_color=("#F1F5F9", "#CBD5E1"))
+        self._hdr_clock.pack(side="right")
+        self._tick_clock()
 
     # ─── SIDEBAR ──────────────────────────────────────────────
     def _build_sidebar(self, parent):
-        sidebar = ctk.CTkFrame(parent, width=240, corner_radius=12,
+        sidebar = ctk.CTkFrame(parent, width=235, corner_radius=12,
                                 border_width=1, border_color=BORDER_SUBTLE)
-        sidebar.pack(side="right", fill="y", padx=(10, 0), pady=8)
+        sidebar.pack(side="right", fill="y", padx=(8, 0), pady=8)
         sidebar.pack_propagate(False)
 
         ctk.CTkLabel(sidebar, text="⚙️  إعدادات التصدير",
@@ -588,13 +819,17 @@ class OdooReportApp(ctk.CTk):
         self._report_type_var = ctk.StringVar(value="inventory")
         ctk.CTkRadioButton(sidebar, text="📊 حركة ومخزون المنتجات", variable=self._report_type_var,
                            value="inventory", font=ctk.CTkFont(APP_FONT, 11),
-                           command=self._on_report_type_change).pack(anchor="e", padx=18, pady=3)
+                           command=self._on_report_type_change).pack(anchor="e", padx=18, pady=2)
         ctk.CTkRadioButton(sidebar, text="🧾 مبيعات وخصومات نقاط البيع", variable=self._report_type_var,
                            value="pos_discounts", font=ctk.CTkFont(APP_FONT, 11),
-                           command=self._on_report_type_change).pack(anchor="e", padx=18, pady=3)
+                           command=self._on_report_type_change).pack(anchor="e", padx=18, pady=2)
+        ctk.CTkRadioButton(sidebar, text="🛒 تقارير المشتريات والتوريد", variable=self._report_type_var,
+                           value="purchases", font=ctk.CTkFont(APP_FONT, 11, "bold"),
+                           text_color=("#B45309", "#FBBF24"),
+                           command=self._on_report_type_change).pack(anchor="e", padx=18, pady=2)
 
         sep1 = ctk.CTkFrame(sidebar, height=1, fg_color=BORDER_SUBTLE)
-        sep1.pack(fill="x", padx=14, pady=(10, 8))
+        sep1.pack(fill="x", padx=14, pady=(8, 6))
 
         # ── Pinned Bottom: Output path & browse ───────────
         save_frame = ctk.CTkFrame(sidebar, fg_color="transparent")
@@ -749,15 +984,117 @@ class OdooReportApp(ctk.CTk):
                         variable=self._pos_export_pdf,
                         font=ctk.CTkFont(APP_FONT, 11)).pack(anchor="e", padx=16, pady=(4, 6))
 
+        # --- Subframe C: Smart Purchasing & Supply Chain Options ---
+        self._purchase_options_frame = ctk.CTkFrame(self._sidebar_scroll, fg_color="transparent")
+        # (initially hidden)
+
+        ctk.CTkLabel(self._purchase_options_frame, text="🛒 منظومة المشتريات والتوريد",
+                     font=ctk.CTkFont(APP_FONT, 11, "bold"),
+                     text_color=("#D97706", "#FBBF24")).pack(anchor="e", padx=10, pady=(4, 4))
+
+        purch_info_card = ctk.CTkFrame(self._purchase_options_frame, fg_color=("gray95", BG_CARD), corner_radius=8,
+                                       border_width=1, border_color=BORDER_SUBTLE)
+        purch_info_card.pack(fill="x", padx=8, pady=(0, 8))
+        ctk.CTkLabel(purch_info_card,
+                     text="💡 منظومة تنفيذية شاملة: ما يجب شراؤه، سجل ما تم شراؤه والبونص، تقييم الموردين، رقابة الأسعار، والطلبيات بالطريق.",
+                     font=ctk.CTkFont(APP_FONT, 10), text_color=BRAND_SLATE,
+                     wraplength=195, justify="right").pack(padx=8, pady=7)
+
+        # Scope / Mode selector
+        ctk.CTkLabel(self._purchase_options_frame, text="📌 نطاق تقارير المشتريات",
+                     font=ctk.CTkFont(APP_FONT, 11, "bold"),
+                     text_color=BRAND_SLATE).pack(anchor="e", padx=10, pady=(2, 3))
+
+        self._purch_mode_var = ctk.StringVar(value="comprehensive")
+        purch_modes = [
+            ("comprehensive", "📊 الحزمة الشاملة (كافة التقارير)"),
+            ("what_to_buy", "🛒 ما يجب شراؤه فقط (الاحتياج)"),
+            ("what_was_bought", "🧾 ما تم شراؤه فقط (سجل الشراء)"),
+        ]
+        for val, label in purch_modes:
+            ctk.CTkRadioButton(self._purchase_options_frame, text=label, variable=self._purch_mode_var,
+                               value=val, font=ctk.CTkFont(APP_FONT, 10),
+                               command=self._on_purch_options_change).pack(anchor="e", padx=12, pady=2)
+
+        sep_p1 = ctk.CTkFrame(self._purchase_options_frame, height=1, fg_color=BORDER_SUBTLE)
+        sep_p1.pack(fill="x", padx=8, pady=6)
+
+        # Target Coverage Days selector
+        ctk.CTkLabel(self._purchase_options_frame, text="⏳ أيام التغطية المستهدفة للاحتياج",
+                     font=ctk.CTkFont(APP_FONT, 11, "bold"),
+                     text_color=BRAND_SLATE).pack(anchor="e", padx=10, pady=(0, 3))
+
+        self._purch_cov_var = ctk.StringVar(value="60 يوم (شهران - افتراضي)")
+        self._purch_cov_menu = ctk.CTkOptionMenu(
+            self._purchase_options_frame,
+            variable=self._purch_cov_var,
+            values=[
+                "30 يوم (شهر)",
+                "60 يوم (شهران - افتراضي)",
+                "90 يوم (3 أشهر)",
+                "120 يوم (4 أشهر)",
+                "180 يوم (6 أشهر)",
+                "مخصص..."
+            ],
+            font=ctk.CTkFont(APP_FONT, 10),
+            dropdown_font=ctk.CTkFont(APP_FONT, 10),
+            corner_radius=8,
+            height=28,
+            command=self._on_purch_cov_change
+        )
+        self._purch_cov_menu.pack(fill="x", padx=10, pady=(0, 4))
+
+        self._purch_custom_cov_frame = ctk.CTkFrame(self._purchase_options_frame, fg_color="transparent")
+        ctk.CTkLabel(self._purch_custom_cov_frame, text="عدد الأيام:", font=ctk.CTkFont(APP_FONT, 10)).pack(side="right", padx=(0, 4))
+        self._purch_custom_cov_entry = ctk.CTkEntry(self._purch_custom_cov_frame, width=80, height=28,
+                                                    justify="center", font=ctk.CTkFont(APP_FONT, 11, "bold"))
+        self._purch_custom_cov_entry.insert(0, "45")
+        self._purch_custom_cov_entry.pack(side="right", padx=4)
+
+        sep_p2 = ctk.CTkFrame(self._purchase_options_frame, height=1, fg_color=BORDER_SUBTLE)
+        sep_p2.pack(fill="x", padx=8, pady=6)
+
+        ctk.CTkLabel(self._purchase_options_frame, text="🧠 خيارات ذكاء المشتريات",
+                     font=ctk.CTkFont(APP_FONT, 11, "bold"),
+                     text_color=BRAND_SLATE).pack(anchor="e", padx=10, pady=(0, 3))
+
+        self._purch_only_needed = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(self._purchase_options_frame, text="🎯 الأصناف المطلوبة للشراء فقط",
+                        variable=self._purch_only_needed,
+                        font=ctk.CTkFont(APP_FONT, 10)).pack(anchor="e", padx=12, pady=3)
+
+        self._purch_deduct_open_po = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(self._purchase_options_frame, text="🚚 خصم الطلبيات المفتوحة (بالطريق)",
+                        variable=self._purch_deduct_open_po,
+                        font=ctk.CTkFont(APP_FONT, 10)).pack(anchor="e", padx=12, pady=3)
+
+        self._purch_deduct_surplus = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(self._purchase_options_frame, text="🏭 خصم رصيد المستودعات والفائض",
+                        variable=self._purch_deduct_surplus,
+                        font=ctk.CTkFont(APP_FONT, 10)).pack(anchor="e", padx=12, pady=3)
+
+        self._purch_vendor_score = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(self._purchase_options_frame, text="🤝 تقييم الموردين ورقابة الأسعار",
+                        variable=self._purch_vendor_score,
+                        font=ctk.CTkFont(APP_FONT, 10)).pack(anchor="e", padx=12, pady=3)
+
+        self._purch_export_pdf = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(self._purchase_options_frame, text="📄 تصدير طلب الشراء PDF (عند الطلب)",
+                        variable=self._purch_export_pdf,
+                        font=ctk.CTkFont(APP_FONT, 10)).pack(anchor="e", padx=12, pady=(3, 6))
+
     # ─── TABS ─────────────────────────────────────────────────
     def _build_tabs(self, parent):
         self._tabview = ctk.CTkTabview(parent, corner_radius=12,
                                         border_width=1, border_color=BORDER_SUBTLE)
         self._tabview.pack(side="left", fill="both", expand=True, pady=8)
 
-        tab_filters = self._tabview.add("🔍  فلاتر الأصناف")
-        tab_period = self._tabview.add("📅  الفترة الزمنية")
-        tab_showrooms = self._tabview.add("🏬  المعارض")
+        # NOTE: Tk on Windows renders Arabic words in LTR order. We pre-reverse
+        # the word order so that when read RTL the text appears correct.
+        # Emoji placed at end of source → appears at visual right (RTL start).
+        tab_filters = self._tabview.add("الأصناف فلاتر  🔍")
+        tab_period = self._tabview.add("الزمنية الفترة  📅")
+        tab_showrooms = self._tabview.add("المعارض  🏬")
 
         self._build_tab_filters(tab_filters)
         self._build_tab_period(tab_period)
@@ -765,100 +1102,206 @@ class OdooReportApp(ctk.CTk):
 
     # ─── TAB: FILTERS ─────────────────────────────────────────
     def _build_tab_filters(self, parent):
-        scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
-        scroll.pack(fill="both", expand=True, padx=4, pady=4)
+        container = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        container.pack(fill="both", expand=True, padx=4, pady=4)
 
-        info = ctk.CTkLabel(scroll,
-            text="يمكن ترك أي فلتر فارغاً لتضمين جميع الأصناف. تدعم الفلاتر: الفاصلة `,` للعناصر المتعددة، والنجمة `*` والاستفهام `?` للبحث الجزئي.",
-            font=ctk.CTkFont(APP_FONT, 11), text_color=BRAND_SLATE,
-            wraplength=700, justify="right")
-        info.pack(anchor="e", padx=8, pady=(4, 12))
+        info = ctk.CTkLabel(container,
+            text="يمكن ترك أي فلتر فارغاً لتضمين جميع الأصناف. تدعم الفلاتر: الفاصلة `,` للعناصر المتعددة، والنجمة `*` و `?` للبحث الجزئي.",
+            font=ctk.CTkFont(APP_FONT, 10), text_color=BRAND_SLATE,
+            wraplength=750, justify="right")
+        info.pack(anchor="e", padx=6, pady=(0, 6))
 
-        # Filter 1: Internal Reference
-        card1 = SectionCard(scroll, title="كود الصنف  (Internal Reference)", icon="1️⃣")
-        card1.pack(fill="x", padx=4, pady=(0, 8))
+        # Main 2-column layout: Right column (Filters 1, 2, 3) | Left column (Filters 4 & 5)
+        cols_frame = ctk.CTkFrame(container, fg_color="transparent")
+        cols_frame.pack(fill="both", expand=True)
+        cols_frame.columnconfigure(0, weight=1, uniform="filter_cols")  # Left: Filters 4 (Tags) & 5 (Vendors)
+        cols_frame.columnconfigure(1, weight=1, uniform="filter_cols")  # Right: Filters 1, 2, 3
+        cols_frame.rowconfigure(0, weight=1)
+
+        # ── Right Column: Filters 1, 2, 3 ──────────────────────
+        right_col = ctk.CTkFrame(cols_frame, fg_color="transparent")
+        right_col.grid(row=0, column=1, sticky="nsew", padx=(4, 0), pady=0)
+
+        # 1️⃣ كود الصنف (Internal Reference)
+        card1 = SectionCard(right_col, title="كود الصنف (Internal Reference)", icon="1️⃣")
+        card1.pack(fill="x", pady=(0, 6))
         ctk.CTkLabel(card1.content,
-                     text="مثال: 4101-000000, 4101-000002, TS*",
+                     text="مثال: 4101-000000, TS*",
                      font=ctk.CTkFont(APP_FONT, 10), text_color=BRAND_SLATE).pack(anchor="e")
         self._f_ref = ctk.CTkEntry(card1.content, placeholder_text="أكواد مفصولة بفاصلة...",
                                    height=36, font=ctk.CTkFont(APP_FONT, 12))
         self._f_ref.pack(fill="x", pady=(4, 0))
 
-        # Filter 2: Barcode (unified)
-        card2 = SectionCard(scroll, title="الباركود وباركود العبوات  (Barcode & Packages) — حقل موحد", icon="2️⃣")
-        card2.pack(fill="x", padx=4, pady=(0, 8))
+        # 2️⃣ الباركود والعبوات (Barcode)
+        card2 = SectionCard(right_col, title="الباركود والعبوات (Barcode)", icon="2️⃣")
+        card2.pack(fill="x", pady=(0, 6))
         ctk.CTkLabel(card2.content,
-                     text="مثال: 628100*, 628???99, 123456789",
+                     text="مثال: 628100*, 123456789",
                      font=ctk.CTkFont(APP_FONT, 10), text_color=BRAND_SLATE).pack(anchor="e")
         self._f_barcode = ctk.CTkEntry(card2.content, placeholder_text="باركودات مفصولة بفاصلة...",
                                        height=36, font=ctk.CTkFont(APP_FONT, 12))
         self._f_barcode.pack(fill="x", pady=(4, 0))
 
-        # Filter 3: Name
-        card3 = SectionCard(scroll, title="اسم الصنف بالعربي أو الإنجليزي  (Product Name)", icon="3️⃣")
-        card3.pack(fill="x", padx=4, pady=(0, 8))
+        # 3️⃣ اسم الصنف (Product Name)
+        card3 = SectionCard(right_col, title="اسم الصنف (Product Name)", icon="3️⃣")
+        card3.pack(fill="x", pady=(0, 0))
         ctk.CTkLabel(card3.content,
-                     text="مثال: عطر*, *PERFUME*, لوشن, صابون",
+                     text="مثال: عطر*, *PERFUME*, لوشن",
                      font=ctk.CTkFont(APP_FONT, 10), text_color=BRAND_SLATE).pack(anchor="e")
         self._f_name = ctk.CTkEntry(card3.content, placeholder_text="جزء من الاسم أو عدة أسماء...",
                                     height=36, font=ctk.CTkFont(APP_FONT, 12))
         self._f_name.pack(fill="x", pady=(4, 0))
 
-        # Filter 4: Tags — autocomplete
-        card4 = SectionCard(scroll, title="وسوم الأصناف  (Products / Tags) — اختيار تلقائي", icon="4️⃣")
-        card4.pack(fill="x", padx=4, pady=(0, 8))
+        # ── Left Column: Filter 4 (Tags) & Filter 5 (Vendors) ──
+        left_col = ctk.CTkFrame(cols_frame, fg_color="transparent")
+        left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 4), pady=0)
+
+        card4 = SectionCard(left_col, title="وسوم الأصناف (Tags)", icon="4️⃣")
+        card4.pack(fill="x", pady=(0, 6))
         ctk.CTkLabel(card4.content,
                      text="اكتب جزءاً من اسم الوسم ثم اضغط مسافة أو اختر من القائمة.",
                      font=ctk.CTkFont(APP_FONT, 10), text_color=BRAND_SLATE).pack(anchor="e")
-        self._tag_selector = TagMultiSelect(card4.content, tags_list=self.all_tags,
-                                            fg_color="transparent")
+        self._tag_selector = TagMultiSelect(
+            card4.content,
+            tags_list=self.all_tags,
+            chips_height=58,
+            fg_color="transparent"
+        )
         self._tag_selector.pack(fill="x", pady=(4, 0))
 
+        card5 = SectionCard(left_col, title="فلتر الموردين (Vendors)", icon="5️⃣")
+        card5.pack(fill="x")
+        ctk.CTkLabel(card5.content,
+                     text="اكتب جزءاً من اسم المورد لاختيار مورد واحد أو عدة موردين للتقرير.",
+                     font=ctk.CTkFont(APP_FONT, 10), text_color=BRAND_SLATE).pack(anchor="e")
+        self._vendor_selector = TagMultiSelect(
+            card5.content,
+            tags_list=self.all_vendors,
+            placeholder_text="ابحث عن مورد... (اكتب للبحث أو اضغط مسافة للاختيار)",
+            empty_text="جميع الموردين (لم يتم تحديد مورد)",
+            chips_height=58,
+            chip_color="#D97706",
+            fg_color="transparent"
+        )
+        self._vendor_selector.pack(fill="x", pady=(4, 0))
+
         # Clear button
-        ctk.CTkButton(scroll, text="🔄  تفريغ جميع حقول الفلاتر",
+        btn_bar = ctk.CTkFrame(container, fg_color="transparent")
+        btn_bar.pack(fill="x", pady=(8, 0))
+        ctk.CTkButton(btn_bar, text="🔄  تفريغ جميع حقول الفلاتر",
                       fg_color=BRAND_SLATE, hover_color=BRAND_SLATE_HOVER,
-                      height=32, font=ctk.CTkFont(APP_FONT, 11),
-                      command=self._clear_filters).pack(anchor="w", padx=8, pady=8)
+                      height=34, font=ctk.CTkFont(APP_FONT, 11),
+                      command=self._clear_filters).pack(side="left", padx=4)
 
     # ─── TAB: PERIOD ──────────────────────────────────────────
     def _build_tab_period(self, parent):
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=4, pady=4)
 
-        period_card = SectionCard(scroll, title="تحديد الفترة الزمنية للمبيعات", icon="📅")
-        period_card.pack(fill="x", padx=4, pady=(4, 8))
+        info = ctk.CTkLabel(
+            scroll,
+            text="💡 يمكنك تحديد فترة قياس المبيعات بشكل مستقل عن فترة سجل المشتريات والطلبيات قيد الاستلام (مثال: قياس مبيعات آخر 90 يوماً مع مراجعة مشتريات العام الحالي).",
+            font=ctk.CTkFont(APP_FONT, 10), text_color=BRAND_SLATE,
+            wraplength=760, justify="right"
+        )
+        info.pack(anchor="e", padx=6, pady=(0, 6))
+
+        cols_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        cols_frame.pack(fill="both", expand=True)
+        cols_frame.columnconfigure(0, weight=1, uniform="period_cols")  # Left: Purchases Period
+        cols_frame.columnconfigure(1, weight=1, uniform="period_cols")  # Right: Sales Period
+        cols_frame.rowconfigure(0, weight=1)
+
+        # ── Right Column: 1️⃣ Sales Period ─────────────────────
+        right_col = ctk.CTkFrame(cols_frame, fg_color="transparent")
+        right_col.grid(row=0, column=1, sticky="nsew", padx=(4, 0), pady=0)
+
+        period_card = SectionCard(right_col, title="الفترة الزمنية للمبيعات (Sales Period)", icon="1️⃣")
+        period_card.pack(fill="x", pady=(0, 6))
+        ctk.CTkLabel(
+            period_card.content,
+            text="تُستخدم لاحتساب الكمية المباعة، المعدل اليومي، وأيام التغطية والاحتياج:",
+            font=ctk.CTkFont(APP_FONT, 10), text_color=BRAND_SLATE
+        ).pack(anchor="e", pady=(0, 4))
 
         self._period_var = ctk.StringVar(value="this_year")
-        periods = [
+        sales_periods = [
             ("this_year", f"العام الحالي ({datetime.now().year}) (افتراضي)"),
             ("last_30_days", "آخر 30 يوماً"),
             ("last_60_days", "آخر 60 يوماً"),
             ("last_90_days", "آخر 90 يوماً"),
+            ("last_180_days", "آخر 180 يوماً (6 أشهر)"),
             ("last_365_days", "آخر 365 يوماً"),
             ("all", "إجمالي كل الفترات"),
-            ("custom", "فترة مخصصة..."),
+            ("custom", "فترة مبيعات مخصصة..."),
         ]
-        for val, label in periods:
+        for val, label in sales_periods:
             ctk.CTkRadioButton(period_card.content, text=label,
                                variable=self._period_var, value=val,
                                font=ctk.CTkFont(APP_FONT, 12),
                                command=self._on_period_change).pack(
-                anchor="e", pady=4)
+                anchor="e", pady=3)
 
-        # Custom date range (hidden by default)
-        self._custom_dates = SectionCard(scroll, title="الفترة المخصصة", icon="🗓️")
+        # Custom sales date range (hidden by default)
+        self._custom_dates = SectionCard(right_col, title="فترة المبيعات المخصصة", icon="🗓️")
         date_row = ctk.CTkFrame(self._custom_dates.content, fg_color="transparent")
         date_row.pack(fill="x")
 
-        ctk.CTkLabel(date_row, text="من:", font=ctk.CTkFont(APP_FONT, 12)).pack(side="right", padx=6)
-        self._date_from = ctk.CTkEntry(date_row, placeholder_text="YYYY-MM-DD", width=140, height=34)
+        ctk.CTkLabel(date_row, text="من:", font=ctk.CTkFont(APP_FONT, 12)).pack(side="right", padx=4)
+        self._date_from = ctk.CTkEntry(date_row, placeholder_text="YYYY-MM-DD", width=120, height=32)
         self._date_from.insert(0, (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d"))
-        self._date_from.pack(side="right", padx=4)
+        self._date_from.pack(side="right", padx=3)
 
-        ctk.CTkLabel(date_row, text="إلى:", font=ctk.CTkFont(APP_FONT, 12)).pack(side="right", padx=6)
-        self._date_to = ctk.CTkEntry(date_row, placeholder_text="YYYY-MM-DD", width=140, height=34)
+        ctk.CTkLabel(date_row, text="إلى:", font=ctk.CTkFont(APP_FONT, 12)).pack(side="right", padx=4)
+        self._date_to = ctk.CTkEntry(date_row, placeholder_text="YYYY-MM-DD", width=120, height=32)
         self._date_to.insert(0, datetime.now().strftime("%Y-%m-%d"))
-        self._date_to.pack(side="right", padx=4)
+        self._date_to.pack(side="right", padx=3)
+
+        # ── Left Column: 2️⃣ Purchases Period ──────────────────
+        left_col = ctk.CTkFrame(cols_frame, fg_color="transparent")
+        left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 4), pady=0)
+
+        purch_period_card = SectionCard(left_col, title="الفترة الزمنية للمشتريات (Purchases Period)", icon="2️⃣")
+        purch_period_card.pack(fill="x", pady=(0, 6))
+        ctk.CTkLabel(
+            purch_period_card.content,
+            text="تُستخدم لفلترة (ما تم شراؤه)، (تقييم الموردين)، و(طلبيات قيد الاستلام):",
+            font=ctk.CTkFont(APP_FONT, 10), text_color=BRAND_SLATE
+        ).pack(anchor="e", pady=(0, 4))
+
+        self._purch_period_var = ctk.StringVar(value="this_year")
+        purch_periods = [
+            ("this_year", f"العام الحالي ({datetime.now().year}) (افتراضي)"),
+            ("same_as_sales", "🔗 مطابقة لفترة المبيعات تلقائياً"),
+            ("last_30_days", "آخر 30 يوماً"),
+            ("last_60_days", "آخر 60 يوماً"),
+            ("last_90_days", "آخر 90 يوماً"),
+            ("last_180_days", "آخر 180 يوماً (6 أشهر)"),
+            ("last_365_days", "آخر 365 يوماً"),
+            ("all", "إجمالي كل الفترات"),
+            ("custom", "فترة مشتريات مخصصة..."),
+        ]
+        for val, label in purch_periods:
+            ctk.CTkRadioButton(purch_period_card.content, text=label,
+                               variable=self._purch_period_var, value=val,
+                               font=ctk.CTkFont(APP_FONT, 12),
+                               command=self._on_purch_period_change).pack(
+                anchor="e", pady=3)
+
+        # Custom purchase date range (hidden by default)
+        self._purch_custom_dates = SectionCard(left_col, title="فترة المشتريات المخصصة", icon="🗓️")
+        p_date_row = ctk.CTkFrame(self._purch_custom_dates.content, fg_color="transparent")
+        p_date_row.pack(fill="x")
+
+        ctk.CTkLabel(p_date_row, text="من:", font=ctk.CTkFont(APP_FONT, 12)).pack(side="right", padx=4)
+        self._purch_date_from = ctk.CTkEntry(p_date_row, placeholder_text="YYYY-MM-DD", width=120, height=32)
+        self._purch_date_from.insert(0, (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d"))
+        self._purch_date_from.pack(side="right", padx=3)
+
+        ctk.CTkLabel(p_date_row, text="إلى:", font=ctk.CTkFont(APP_FONT, 12)).pack(side="right", padx=4)
+        self._purch_date_to = ctk.CTkEntry(p_date_row, placeholder_text="YYYY-MM-DD", width=120, height=32)
+        self._purch_date_to.insert(0, datetime.now().strftime("%Y-%m-%d"))
+        self._purch_date_to.pack(side="right", padx=3)
 
     # ─── TAB: SHOWROOMS ───────────────────────────────────────
     def _build_tab_showrooms(self, parent):
@@ -877,6 +1320,11 @@ class OdooReportApp(ctk.CTk):
                       fg_color=BRAND_SLATE, hover_color=BRAND_SLATE_HOVER,
                       height=28, font=ctk.CTkFont(APP_FONT, 11),
                       command=self._deselect_showrooms).pack(side="left", padx=4)
+
+        ctk.CTkButton(top_bar, text="🏭 مستودعات فقط", width=105,
+                      fg_color="#D97706", hover_color="#B45309",
+                      height=28, font=ctk.CTkFont(APP_FONT, 11),
+                      command=self._select_only_warehouses).pack(side="left", padx=4)
 
         ctk.CTkButton(top_bar, text="🌿 عناية فقط", width=95,
                       fg_color="#179B9B", hover_color="#148F77",
@@ -905,14 +1353,14 @@ class OdooReportApp(ctk.CTk):
     # ─── FOOTER ───────────────────────────────────────────────
     def _build_footer(self, parent):
         footer = ctk.CTkFrame(parent, corner_radius=0,
-                               fg_color=FOOTER_BG, height=92)
+                               fg_color=FOOTER_BG, height=90)
         footer.pack(fill="x", side="bottom")
         footer.pack_propagate(False)
 
         # Progress bar
         self._progress = ctk.CTkProgressBar(footer, height=6, corner_radius=3,
                                              progress_color=(BRAND_BLUE, BRAND_BLUE_GLOW))
-        self._progress.pack(fill="x", padx=18, pady=(12, 3))
+        self._progress.pack(fill="x", padx=18, pady=(10, 2))
         self._progress.set(0)
 
         self._status_lbl = ctk.CTkLabel(footer, text="جاهز.",
@@ -921,29 +1369,33 @@ class OdooReportApp(ctk.CTk):
         self._status_lbl.pack(anchor="e", padx=20)
 
         btn_row = ctk.CTkFrame(footer, fg_color="transparent")
-        btn_row.pack(fill="x", padx=18, pady=(3, 10))
+        btn_row.pack(fill="x", padx=18, pady=(2, 10))
 
         self._btn_open_dir = ctk.CTkButton(btn_row, text="📁 المجلد", width=100, height=36,
                                             corner_radius=8,
                                             fg_color=BRAND_SLATE, hover_color=BRAND_SLATE_HOVER,
+                                            font=ctk.CTkFont(APP_FONT, 11),
                                             state="disabled", command=self._open_dir)
         self._btn_open_dir.pack(side="left", padx=4)
 
         self._btn_open = ctk.CTkButton(btn_row, text="📊 فتح الإكسيل", width=120, height=36,
                                         corner_radius=8,
                                         fg_color=BRAND_GREEN, hover_color=BRAND_GREEN_HOVER,
+                                        font=ctk.CTkFont(APP_FONT, 11),
                                         state="disabled", command=self._open_file)
         self._btn_open.pack(side="left", padx=4)
 
         self._btn_open_pdf = ctk.CTkButton(btn_row, text="📄 فتح كشف PDF", width=125, height=36,
                                            corner_radius=8,
                                            fg_color="#059669", hover_color="#047857",
+                                           font=ctk.CTkFont(APP_FONT, 11),
                                            state="disabled", command=self._open_pdf)
         self._btn_open_pdf.pack(side="left", padx=4)
 
         self._btn_cancel = ctk.CTkButton(btn_row, text="⏹ إلغاء", width=100, height=36,
                                           corner_radius=8,
                                           fg_color=BRAND_RED, hover_color=BRAND_RED_HOVER,
+                                          font=ctk.CTkFont(APP_FONT, 11),
                                           state="disabled", command=self._cancel_export)
         self._btn_cancel.pack(side="left", padx=4)
 
@@ -955,10 +1407,57 @@ class OdooReportApp(ctk.CTk):
                                           height=42, command=self._start_export)
         self._btn_export.pack(side="right", fill="x", expand=True, padx=(14, 0))
 
-        # Bottom signature
-        ctk.CTkLabel(parent,
-                     text="تصميم وبرمجة: عبدالله الخطيب  |  Abdullah Al-Khatib © 2026  |  جميع الحقوق محفوظة",
-                     font=ctk.CTkFont(APP_FONT, 10), text_color=("gray50", "#3D5168")).pack(pady=(0, 5))
+    # ══════════════════════════════════════════════════════
+    # 🎯 PRICE COMPARATOR & COMPETITOR INTELLIGENCE LAUNCHER
+    # ══════════════════════════════════════════════════════
+    def _launch_price_comparator(self):
+        """
+        Launches the Price Comparator & Competitor Intelligence Suite.
+        Protected by permissions: if not active, prompts for admin password.
+        """
+        perms, _ = load_permissions()
+        if not perms.get("Price_Comparator", False):
+            dlg = SecurePasswordDialog(
+                self,
+                title="🔒 صلاحية مقفلة",
+                prompt="⚠️ برنامج مساعد التسعير يحتوي على تكاليف الشراء ومقيد بالصلاحيات.\nأدخل كلمة مرور الإدارة لفتحه:"
+            )
+            pwd = dlg.get_input()
+            if not pwd:
+                return
+            if not verify_admin_password(pwd.strip()):
+                messagebox.showerror("صلاحية مرفوضة", "عذراً، كلمة المرور غير صحيحة أو ليس لديك صلاحية للوصول إلى مساعد التسعير والتكاليف.")
+                return
+
+        # Determine binary or script path
+        base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        work_dir = r"c:\OdooDB"
+
+        candidates = [
+            os.path.join(base_dir, "PriceComparator.exe"),
+            os.path.join(work_dir, "PriceComparator.exe"),
+            os.path.join(work_dir, "releases", "v1.00", "PriceComparator.exe"),
+        ]
+
+        for p in candidates:
+            if os.path.exists(p):
+                try:
+                    subprocess.Popen([p], cwd=os.path.dirname(p))
+                    return
+                except Exception:
+                    pass
+
+        # Fallback to python script
+        py_path = os.path.join(work_dir, "price_comparator_app.py")
+        if os.path.exists(py_path):
+            try:
+                subprocess.Popen([sys.executable, py_path], cwd=work_dir)
+                return
+            except Exception as e:
+                messagebox.showerror("خطأ", f"فشل تشغيل مساعد التسعير:\n{e}")
+                return
+
+        messagebox.showerror("غير موجود", "تعذر العثور على ملف تشغيل مساعد التسعير (PriceComparator.exe أو price_comparator_app.py).")
 
     # ══════════════════════════════════════════════════════
     # 🔒 ADMIN PERMISSIONS DIALOG
@@ -1002,13 +1501,16 @@ class OdooReportApp(ctk.CTk):
 
         # Group fields visually
         groups = [
-            ("💰 الأسعار", ["Cost", "Sales Price", "هامش الربح (%)", "Shati Price", "SO Price", "Pos Minimum Price",
+            ("🔑 المعرفات والبيانات التقنية", ["id"]),
+            ("🎯 التطبيقات والأدوات المتقدمة (تكاليف وأسعار الموردين)", ["Price_Comparator", "Purchase_Reports", "Purchase_Price_Variance"]),
+            ("💰 الأسعار", ["Cost", "Sales Price", "Shati Price", "SO Price", "Pos Minimum Price",
                            "خصم البيع", "نوع احتساب الخصم", "وسم قاعدة الخصم", "التكلفة الفعلية", "هامش الربح الفعلي (%)", "السعر الجديد"]),
             ("📦 المخزون والمبيعات الإجمالية", ["Quantity On Hand", "365d Sold"]),
             ("🏭 بيانات الموردين", ["Vendors", "Vendors/Price", "Vendors/Discount (%)",
                                    "Vendors/Discounted Price", "Vendors/Last Purchase",
                                    "Vendors/Last Updated on", "Last Received Qty"]),
             ("🏬 المعارض التفصيلية", ["Showrooms_OnHand", "Showrooms_Sold"]),
+            ("🏢 المستودعات ومخازن البضائع (مخزون فقط)", ["Warehouses_OnHand"]),
             ("📈 تحليلات وتوصيات المخزون", ["تصنيف ABC", "أيام التغطية", "حالة الصنف", "الطلب المقترح (60 يوم)", "قيمة الطلب المقترح", "توصيات المناقلة"]),
             ("📝 الملاحظات والبيانات الإضافية", ["Internal Notes"]),
         ]
@@ -1073,6 +1575,15 @@ class OdooReportApp(ctk.CTk):
     # ══════════════════════════════════════════════════════
     # ⚙️ HELPERS
     # ══════════════════════════════════════════════════════
+    def _tick_clock(self):
+        """Update header clock every second in 12-hour format without seconds."""
+        if hasattr(self, '_hdr_clock') and self._hdr_clock.winfo_exists():
+            now = datetime.now()
+            period = "ص" if now.hour < 12 else "م"
+            h = now.hour % 12 or 12
+            self._hdr_clock.configure(text=f"📅 {now.strftime('%Y/%m/%d')}   ⏰ {h:02d}:{now.minute:02d} {period}")
+            self.after(1000, self._tick_clock)
+
     def _change_theme(self, choice):
         theme = "Light" if "فاتح" in choice else "Dark"
         ctk.set_appearance_mode(theme)
@@ -1081,56 +1592,124 @@ class OdooReportApp(ctk.CTk):
 
     def _on_period_change(self):
         if self._period_var.get() == "custom":
-            self._custom_dates.pack(fill="x", padx=4, pady=(0, 8))
+            self._custom_dates.pack(fill="x", padx=0, pady=(0, 8))
         else:
             self._custom_dates.pack_forget()
 
+    def _on_purch_period_change(self):
+        if hasattr(self, '_purch_period_var') and self._purch_period_var.get() == "custom":
+            self._purch_custom_dates.pack(fill="x", padx=0, pady=(0, 8))
+        elif hasattr(self, '_purch_custom_dates'):
+            self._purch_custom_dates.pack_forget()
+
+    def _is_auto_filename(self, cur_path):
+        if not cur_path:
+            return True
+        auto_prefixes = (
+            "تقرير_العسلي_",
+            "تقرير_مبيعات_الخصومات_",
+            "تقرير_مبيعات_الأصناف_",
+            "منظومة_المشتريات_والتوريد_",
+            "خطة_احتياج_المشتريات_",
+            "سجل_وتحليل_المشتريات_",
+        )
+        return any(p in cur_path for p in auto_prefixes)
+
+    def _get_default_filename(self):
+        today_str = datetime.now().strftime('%Y%m%d')
+        rtype = self._report_type_var.get() if hasattr(self, '_report_type_var') else "inventory"
+        if rtype == "pos_discounts":
+            is_all = hasattr(self, '_pos_all_sales') and self._pos_all_sales.get()
+            return f"تقرير_مبيعات_الأصناف_{today_str}.xlsx" if is_all else f"تقرير_مبيعات_الخصومات_{today_str}.xlsx"
+        elif rtype == "purchases":
+            pmode = self._purch_mode_var.get() if hasattr(self, '_purch_mode_var') else "comprehensive"
+            if pmode == "what_to_buy":
+                return f"خطة_احتياج_المشتريات_{today_str}.xlsx"
+            elif pmode == "what_was_bought":
+                return f"سجل_وتحليل_المشتريات_{today_str}.xlsx"
+            return f"منظومة_المشتريات_والتوريد_{today_str}.xlsx"
+        return f"تقرير_العسلي_{today_str}.xlsx"
+
     def _on_report_type_change(self):
         rtype = self._report_type_var.get()
-        today_str = datetime.now().strftime('%Y%m%d')
         desktop = os.path.join(os.path.expanduser("~"), "Desktop")
 
+        self._inventory_options_frame.pack_forget()
+        self._pos_options_frame.pack_forget()
+        if hasattr(self, '_purchase_options_frame'):
+            self._purchase_options_frame.pack_forget()
+
         if rtype == "pos_discounts":
-            self._inventory_options_frame.pack_forget()
             self._pos_options_frame.pack(fill="x", pady=0)
-            self._btn_export.configure(text=self._get_export_button_text())
-            cur_path = self._path_entry.get().strip()
-            if not cur_path or "تقرير_العسلي_" in cur_path or "تقرير_مبيعات_الخصومات_" in cur_path or "تقرير_مبيعات_الأصناف_" in cur_path:
-                self._path_entry.delete(0, "end")
-                fname = f"تقرير_مبيعات_الأصناف_{today_str}.xlsx" if (hasattr(self, '_pos_all_sales') and self._pos_all_sales.get()) else f"تقرير_مبيعات_الخصومات_{today_str}.xlsx"
-                self._path_entry.insert(0, os.path.join(desktop, fname))
+            if hasattr(self, '_btn_open_pdf'):
+                self._btn_open_pdf.configure(text="📄 فتح كشف PDF")
+        elif rtype == "purchases":
+            if hasattr(self, '_purchase_options_frame'):
+                self._purchase_options_frame.pack(fill="x", pady=0)
+            if hasattr(self, '_btn_open_pdf'):
+                self._btn_open_pdf.configure(text="📄 فتح طلب الشراء PDF")
         else:
-            self._pos_options_frame.pack_forget()
             self._inventory_options_frame.pack(fill="x", pady=0)
-            self._btn_export.configure(text=self._get_export_button_text())
-            cur_path = self._path_entry.get().strip()
-            if not cur_path or "تقرير_العسلي_" in cur_path or "تقرير_مبيعات_الخصومات_" in cur_path or "تقرير_مبيعات_الأصناف_" in cur_path:
-                self._path_entry.delete(0, "end")
-                self._path_entry.insert(0, os.path.join(desktop, f"تقرير_العسلي_{today_str}.xlsx"))
+
+        self._btn_export.configure(text=self._get_export_button_text())
+        cur_path = self._path_entry.get().strip()
+        if self._is_auto_filename(cur_path):
+            self._path_entry.delete(0, "end")
+            self._path_entry.insert(0, os.path.join(desktop, self._get_default_filename()))
 
     def _on_pos_options_change(self):
         self._btn_export.configure(text=self._get_export_button_text())
-        today_str = datetime.now().strftime('%Y%m%d')
         desktop = os.path.join(os.path.expanduser("~"), "Desktop")
         cur_path = self._path_entry.get().strip()
-        if not cur_path or "تقرير_العسلي_" in cur_path or "تقرير_مبيعات_الخصومات_" in cur_path or "تقرير_مبيعات_الأصناف_" in cur_path:
+        if self._is_auto_filename(cur_path):
             self._path_entry.delete(0, "end")
-            fname = f"تقرير_مبيعات_الأصناف_{today_str}.xlsx" if (hasattr(self, '_pos_all_sales') and self._pos_all_sales.get()) else f"تقرير_مبيعات_الخصومات_{today_str}.xlsx"
-            self._path_entry.insert(0, os.path.join(desktop, fname))
+            self._path_entry.insert(0, os.path.join(desktop, self._get_default_filename()))
+
+    def _on_purch_options_change(self):
+        self._btn_export.configure(text=self._get_export_button_text())
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        cur_path = self._path_entry.get().strip()
+        if self._is_auto_filename(cur_path):
+            self._path_entry.delete(0, "end")
+            self._path_entry.insert(0, os.path.join(desktop, self._get_default_filename()))
+
+    def _on_purch_cov_change(self, choice=None):
+        val = self._purch_cov_var.get()
+        if "مخصص" in val:
+            self._purch_custom_cov_frame.pack(fill="x", padx=10, pady=(0, 4), after=self._purch_cov_menu)
+        else:
+            self._purch_custom_cov_frame.pack_forget()
+
+    def _get_purch_coverage_days(self):
+        val = self._purch_cov_var.get() if hasattr(self, '_purch_cov_var') else "60"
+        if "مخصص" in val:
+            try:
+                d = int(self._purch_custom_cov_entry.get().strip())
+                return max(1, min(730, d))
+            except Exception:
+                return 60
+        for num in (30, 60, 90, 120, 180):
+            if str(num) in val:
+                return num
+        return 60
 
     def _get_export_button_text(self):
-        if hasattr(self, '_report_type_var') and self._report_type_var.get() == "pos_discounts":
+        rtype = self._report_type_var.get() if hasattr(self, '_report_type_var') else "inventory"
+        if rtype == "pos_discounts":
             if hasattr(self, '_pos_all_sales') and self._pos_all_sales.get():
                 return "🧾  تصدير كافة مبيعات الأصناف (Excel)"
             return "🧾  تصدير مبيعات الخصومات (Excel)"
+        elif rtype == "purchases":
+            pmode = self._purch_mode_var.get() if hasattr(self, '_purch_mode_var') else "comprehensive"
+            if pmode == "what_to_buy":
+                return "🛒  تصدير خطة الاحتياج وما يجب شراؤه (Excel)"
+            elif pmode == "what_was_bought":
+                return "🧾  تصدير سجل وتحليل المشتريات (Excel)"
+            return "🛒  تصدير منظومة المشتريات والتوريد الذكي (Excel)"
         return "🚀  بدء تصدير التقرير (Excel)"
 
     def _browse_path(self):
-        today_str = datetime.now().strftime('%Y%m%d')
-        if hasattr(self, '_report_type_var') and self._report_type_var.get() == "pos_discounts":
-            default_name = f"تقرير_مبيعات_الأصناف_{today_str}.xlsx" if (hasattr(self, '_pos_all_sales') and self._pos_all_sales.get()) else f"تقرير_مبيعات_الخصومات_{today_str}.xlsx"
-        else:
-            default_name = f"تقرير_العسلي_{today_str}.xlsx"
+        default_name = self._get_default_filename()
         f = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
             filetypes=[("Excel Files", "*.xlsx")],
@@ -1145,6 +1724,8 @@ class OdooReportApp(ctk.CTk):
         self._f_barcode.delete(0, "end")
         self._f_name.delete(0, "end")
         self._tag_selector._clear_all()
+        if hasattr(self, '_vendor_selector'):
+            self._vendor_selector._clear_all()
 
     def _select_showrooms(self):
         for v in self.showroom_vars.values():
@@ -1152,6 +1733,8 @@ class OdooReportApp(ctk.CTk):
 
     def _deselect_showrooms(self):
         for v in self.showroom_vars.values():
+            v.set(False)
+        for v in self.warehouse_vars.values():
             v.set(False)
 
     def _select_only_showrooms(self):
@@ -1161,6 +1744,8 @@ class OdooReportApp(ctk.CTk):
             var = self.showroom_vars.get(s['id'])
             if var:
                 var.set(not is_care)
+        for v in self.warehouse_vars.values():
+            v.set(False)
 
     def _select_only_care(self):
         custom_types = load_showroom_types()
@@ -1169,6 +1754,14 @@ class OdooReportApp(ctk.CTk):
             var = self.showroom_vars.get(s['id'])
             if var:
                 var.set(is_care)
+        for v in self.warehouse_vars.values():
+            v.set(False)
+
+    def _select_only_warehouses(self):
+        for v in self.showroom_vars.values():
+            v.set(False)
+        for v in self.warehouse_vars.values():
+            v.set(True)
 
     def _open_showroom_types_dialog(self):
         """Interactive modal to classify showrooms as 'معارض' or 'عناية'."""
@@ -1389,16 +1982,23 @@ class OdooReportApp(ctk.CTk):
         def _worker():
             try:
                 self.showrooms = get_active_showrooms()
+                sh_wh_ids = {s['id'] for s in self.showrooms}
+                try:
+                    self.warehouses = get_all_warehouses(exclude_showroom_ids=sh_wh_ids)
+                except Exception:
+                    self.warehouses = []
                 self.after(0, self._populate_showrooms)
             except Exception as e:
-                self.after(0, lambda: self._sh_loading.configure(
-                    text=f"⚠️ تعذر جلب المعارض:\n{e}"))
+                self.after(0, lambda err=e: self._sh_loading.configure(
+                    text=f"⚠️ تعذر جلب المعارض:\n{err}"))
         threading.Thread(target=_worker, daemon=True).start()
 
     def _populate_showrooms(self):
         self._sh_loading.pack_forget()
         prev_selected = {sid: var.get() for sid, var in self.showroom_vars.items()}
+        prev_wh_selected = {wid: var.get() for wid, var in self.warehouse_vars.items()}
         self.showroom_vars.clear()
+        self.warehouse_vars.clear()
         for w in self._sh_scroll.winfo_children():
             w.destroy()
 
@@ -1462,12 +2062,48 @@ class OdooReportApp(ctk.CTk):
                     col = 0
                     row += 1
 
+        # 3. Warehouses section (if user has permission)
+        if self.warehouses and self.permissions.get("Warehouses_OnHand", True):
+            wh_header = ctk.CTkFrame(self._sh_scroll, fg_color=("#FEF3C7", "#3B2A05"), corner_radius=8)
+            wh_header.pack(fill="x", padx=6, pady=(6, 8))
+            ctk.CTkLabel(wh_header, text=f"🏭  المستودعات ومخازن البضائع ({len(self.warehouses)} مستودعات)",
+                         font=ctk.CTkFont(APP_FONT, 12, "bold"), text_color=("#92400E", "#FCD34D")).pack(anchor="e", padx=12, pady=6)
+
+            wh_grid = ctk.CTkFrame(self._sh_scroll, fg_color="transparent")
+            wh_grid.pack(fill="x", padx=6, pady=(0, 10))
+
+            row, col = 0, 0
+            for w in self.warehouses:
+                var = ctk.BooleanVar(value=prev_wh_selected.get(w['id'], False))
+                self.warehouse_vars[w['id']] = var
+                chk = ctk.CTkCheckBox(wh_grid,
+                                       text=f"[{w['code']}] {w['name']}",
+                                       variable=var,
+                                       fg_color="#D97706", hover_color="#B45309",
+                                       font=ctk.CTkFont(APP_FONT, 11, "bold"))
+                chk.grid(row=row, column=col, padx=12, pady=5, sticky="e")
+                col += 1
+                if col >= 3:
+                    col = 0
+                    row += 1
+
     def _load_tags_async(self):
         def _worker():
             try:
                 tags = get_all_product_tags()
                 self.all_tags = tags
                 self.after(0, lambda: self._tag_selector.set_tags_list(tags))
+            except Exception:
+                pass
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _load_vendors_async(self):
+        def _worker():
+            try:
+                vendors = get_all_vendors()
+                self.all_vendors = vendors
+                if hasattr(self, '_vendor_selector'):
+                    self.after(0, lambda: self._vendor_selector.set_tags_list(vendors))
             except Exception:
                 pass
         threading.Thread(target=_worker, daemon=True).start()
@@ -1504,6 +2140,22 @@ class OdooReportApp(ctk.CTk):
         if self.is_exporting:
             return
 
+        rtype = self._report_type_var.get()
+        if rtype == "purchases":
+            perms, _ = load_permissions()
+            if not perms.get("Purchase_Reports", True):
+                dlg = SecurePasswordDialog(
+                    self,
+                    title="🔒 صلاحية مقفلة",
+                    prompt="⚠️ منظومة تقارير المشتريات والتكاليف مقيدة بالصلاحيات.\nأدخل كلمة مرور الإدارة للمتابعة:"
+                )
+                pwd = dlg.get_input()
+                if not pwd:
+                    return
+                if not verify_admin_password(pwd.strip()):
+                    messagebox.showerror("صلاحية مرفوضة", "عذراً، كلمة المرور غير صحيحة أو ليس لديك صلاحية لتصدير تقارير المشتريات والتكاليف.")
+                    return
+
         out_path = self._path_entry.get().strip()
         if not out_path:
             messagebox.showerror("خطأ", "يرجى تحديد مسار حفظ الملف.")
@@ -1520,9 +2172,12 @@ class OdooReportApp(ctk.CTk):
             return False
 
         files_to_check = [out_path]
-        if self._report_type_var.get() == "pos_discounts" and hasattr(self, '_pos_export_pdf') and self._pos_export_pdf.get():
+        if rtype == "pos_discounts" and hasattr(self, '_pos_export_pdf') and self._pos_export_pdf.get():
             base_no_ext = os.path.splitext(out_path)[0]
             files_to_check.append(f"{base_no_ext}_كشف_مطالبة_رسمي.pdf")
+        elif rtype == "purchases" and hasattr(self, '_purch_export_pdf') and self._purch_export_pdf.get():
+            base_no_ext = os.path.splitext(out_path)[0]
+            files_to_check.append(f"{base_no_ext}_طلب_شراء_رسمي.pdf")
 
         for f_path in files_to_check:
             if _check_locked(f_path):
@@ -1539,13 +2194,16 @@ class OdooReportApp(ctk.CTk):
                 return
 
         selected = [sid for sid, v in self.showroom_vars.items() if v.get()]
+        selected_wh = [wid for wid, v in self.warehouse_vars.items() if v.get()] if hasattr(self, 'warehouse_vars') else []
+        if not self.permissions.get("Warehouses_OnHand", True):
+            selected_wh = []
 
         col_opts = {
             'basic_info': self._col_basic.get(),
             'pricing': self._col_price.get(),
             'totals': self._col_totals.get(),
             'vendors': self._col_vendors.get(),
-            'showrooms': self._col_showrooms.get() and bool(selected),
+            'showrooms': self._col_showrooms.get() and bool(selected or selected_wh),
             'analytics': self._col_analytics.get()
         }
 
@@ -1553,10 +2211,15 @@ class OdooReportApp(ctk.CTk):
         c_from = self._date_from.get().strip() if period == "custom" else None
         c_to = self._date_to.get().strip() if period == "custom" else None
 
+        purch_period = self._purch_period_var.get() if hasattr(self, '_purch_period_var') else "this_year"
+        p_from = self._purch_date_from.get().strip() if (purch_period == "custom" and hasattr(self, '_purch_date_from')) else None
+        p_to = self._purch_date_to.get().strip() if (purch_period == "custom" and hasattr(self, '_purch_date_to')) else None
+
         f_ref = self._f_ref.get().strip() or None
         f_bc = self._f_barcode.get().strip() or None
         f_name = self._f_name.get().strip() or None
         f_tags = self._tag_selector.get_selected_tags()
+        f_vendors = self._vendor_selector.get_selected_tags() if hasattr(self, '_vendor_selector') else None
 
         self.is_exporting = True
         self._cancel_flag = False
@@ -1569,7 +2232,7 @@ class OdooReportApp(ctk.CTk):
         def _cb(pct, text):
             self.after(0, lambda: self._update_progress(pct, text))
 
-        if self._report_type_var.get() == "pos_discounts":
+        if rtype == "pos_discounts":
             def _run():
                 try:
                     res = generate_pos_discount_report(
@@ -1596,7 +2259,51 @@ class OdooReportApp(ctk.CTk):
                 except InterruptedError:
                     self.after(0, lambda: self._on_cancelled())
                 except Exception as e:
-                    self.after(0, lambda: self._on_error(e))
+                    self.after(0, lambda err=e: self._on_error(err))
+
+            threading.Thread(target=_run, daemon=True).start()
+        elif rtype == "purchases":
+            cov_days = self._get_purch_coverage_days()
+            pmode = self._purch_mode_var.get()
+            inc_vendor_score = self._purch_vendor_score.get()
+            inc_price_var = inc_vendor_score and self.permissions.get("Purchase_Price_Variance", True)
+
+            def _run():
+                try:
+                    res = generate_purchase_intelligence_report(
+                        filter_internal_ref=f_ref,
+                        filter_barcode=f_bc,
+                        filter_name=f_name,
+                        filter_tags=f_tags,
+                        filter_vendors=f_vendors,
+                        selected_showroom_ids=selected,
+                        selected_warehouse_ids=selected_wh,
+                        sales_period=period,
+                        custom_date_from=c_from,
+                        custom_date_to=c_to,
+                        purchase_period=purch_period,
+                        purchase_date_from=p_from,
+                        purchase_date_to=p_to,
+                        purchase_mode=pmode,
+                        coverage_days=cov_days,
+                        only_needed_items=self._purch_only_needed.get(),
+                        deduct_open_po=self._purch_deduct_open_po.get(),
+                        deduct_warehouse_surplus=self._purch_deduct_surplus.get(),
+                        include_vendor_scorecard=inc_vendor_score,
+                        include_price_variance=inc_price_var,
+                        include_open_po_sheet=True,
+                        export_rfq_pdf=self._purch_export_pdf.get(),
+                        output_path=out_path,
+                        progress_callback=_cb,
+                        is_cancelled=lambda: self._cancel_flag
+                    )
+                    self.last_exported_file = res['output_path']
+                    self.last_exported_pdf = res.get('pdf_path')
+                    self.after(0, lambda: self._on_success(res))
+                except InterruptedError:
+                    self.after(0, lambda: self._on_cancelled())
+                except Exception as e:
+                    self.after(0, lambda err=e: self._on_error(err))
 
             threading.Thread(target=_run, daemon=True).start()
         else:
@@ -1604,6 +2311,7 @@ class OdooReportApp(ctk.CTk):
                 try:
                     res = generate_report(
                         selected_showroom_ids=selected,
+                        selected_warehouse_ids=selected_wh,
                         column_options=col_opts,
                         sales_period=period,
                         custom_date_from=c_from,
@@ -1614,6 +2322,7 @@ class OdooReportApp(ctk.CTk):
                         filter_barcode=f_bc,
                         filter_name=f_name,
                         filter_tags=f_tags,
+                        filter_vendors=f_vendors,
                         output_path=out_path,
                         include_methodology_guide=self._include_guide.get(),
                         progress_callback=_cb,
@@ -1625,7 +2334,7 @@ class OdooReportApp(ctk.CTk):
                 except InterruptedError:
                     self.after(0, lambda: self._on_cancelled())
                 except Exception as e:
-                    self.after(0, lambda: self._on_error(e))
+                    self.after(0, lambda err=e: self._on_error(err))
 
             threading.Thread(target=_run, daemon=True).start()
 
@@ -1644,12 +2353,12 @@ class OdooReportApp(ctk.CTk):
                 self._btn_open_pdf.configure(state="normal")
             else:
                 self._btn_open_pdf.configure(state="disabled")
-        
-        is_pos = hasattr(self, '_report_type_var') and self._report_type_var.get() == "pos_discounts"
-        unit_label = "حركة" if is_pos else "صنف"
+
+        rtype = self._report_type_var.get() if hasattr(self, '_report_type_var') else "inventory"
+        unit_label = "حركة" if rtype == "pos_discounts" else "صنف"
         self._status_lbl.configure(text=f"✅ اكتمل | {res['total_rows']:,} {unit_label} | {res['total_time']}ث")
-        
-        if is_pos:
+
+        if rtype == "pos_discounts":
             is_all = hasattr(self, '_pos_all_sales') and self._pos_all_sales.get()
             rep_title = "كافة مبيعات الأصناف" if is_all else "مبيعات وخصومات نقاط البيع"
             count_label = "إجمالي حركات البيع المطابقة" if is_all else "عدد الحركات المبيعة بخصم"
@@ -1674,6 +2383,31 @@ class OdooReportApp(ctk.CTk):
             )
             if res.get('pdf_path'):
                 msg += f"\n\n📄 كشف المطالبة المعتمد (PDF جاهز للطباعة والختم):\n{res['pdf_path']}"
+        elif rtype == "purchases":
+            tot_purch = res.get('total_purchases_net', 0.0)
+            tot_bonus = res.get('total_bonus_val', 0.0)
+            need_cnt = res.get('items_to_buy_count', 0)
+            tot_sugg_val = res.get('total_suggested_po_val', 0.0)
+            open_val = res.get('open_po_val', 0.0)
+            hikes_cnt = res.get('price_hikes_count', 0)
+            top_v_name = res.get('top_vendor_name', '-')
+            top_v_spend = res.get('top_vendor_spend', 0.0)
+
+            msg = (
+                f"🎉 تم تصدير منظومة تقارير المشتريات والتوريد الذكي بنجاح!\n\n"
+                f"📊 ملخص مؤشرات المشتريات والاحتياج:\n"
+                f"• 🛒 عدد الأصناف المطلوبة للشراء الآن: {need_cnt:,} صنف\n"
+                f"• 💵 التكلفة التقديرية لخطة الاحتياج المقترحة: {tot_sugg_val:,.2f} ر.س\n"
+                f"• 🧾 إجمالي المشتريات الفعلية للفترة (صافي): {tot_purch:,.2f} ر.س\n"
+                f"• 🎁 قيمة البونص المجاني المكتسب: {tot_bonus:,.2f} ر.س\n"
+                f"• 🚚 قيمة الطلبيات المفتوحة بالطريق: {open_val:,.2f} ر.س\n"
+                f"• 📈 أصناف شهدت ارتفاعاً بسعر المورد: {hikes_cnt:,} صنف\n"
+                f"• 🏆 أعلى مورد تعاملاً: {top_v_name} ({top_v_spend:,.2f} ر.س)\n"
+                f"• ⏱️ الوقت المستغرق: {res['total_time']} ثانية\n\n"
+                f"📁 ملف الإكسيل التفاعلي الشامل:\n{res['output_path']}"
+            )
+            if res.get('pdf_path'):
+                msg += f"\n\n📄 طلب الشراء الرسمي المعتمد (PDF جاهز للطباعة):\n{res['pdf_path']}"
         else:
             msg = (
                 f"🎉 تم تصدير التقرير بنجاح!\n\n"

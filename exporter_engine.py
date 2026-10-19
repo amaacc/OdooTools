@@ -47,33 +47,82 @@ def safe_execute_kw(models, db, uid, password, obj, method, args, kw=None, max_r
 
 
 def match_wildcards(text_or_list, patterns):
-    """Match against wildcard/partial patterns. Returns True if any pattern matches any item."""
+    """
+    Match against wildcard/partial patterns. Returns True if any pattern matches any item.
+    Also handles Odoo bracketed codes like '[905-339] Camp Teck-Mokhyam' so patterns such as
+    '905*', '905-*', '[905*', or 'Camp*' match accurately without fnmatch bracket-range pitfalls.
+    """
     if not patterns:
         return True
     items = text_or_list if isinstance(text_or_list, (list, tuple, set)) else [text_or_list]
     clean_items = [" ".join(str(it).strip().lower().split()) for it in items if it]
     if not clean_items:
         return False
+
+    # Pre-expand each item into candidate forms (full, bracket-stripped, code-only, name-only)
+    expanded_candidates = []
+    for item in clean_items:
+        cands = [item]
+        no_br = " ".join(item.replace('[', ' ').replace(']', ' ').split())
+        if no_br and no_br != item:
+            cands.append(no_br)
+        if item.startswith('[') and ']' in item:
+            idx = item.find(']')
+            code_part = item[1:idx].strip()
+            name_part = item[idx + 1:].strip()
+            if code_part:
+                cands.append(code_part)
+            if name_part:
+                cands.append(name_part)
+        expanded_candidates.append((item, no_br, cands))
+
     for pat in patterns:
         pc = " ".join(str(pat).strip().lower().split())
         if not pc:
             continue
+        pc_no_br = " ".join(pc.replace('[', ' ').replace(']', ' ').split())
         is_wc = '*' in pc or '?' in pc
-        for item in clean_items:
+        for item, no_br, cands in expanded_candidates:
             if is_wc:
-                if fnmatch.fnmatch(item, pc):
-                    return True
+                for c in cands:
+                    if (pc_no_br and fnmatch.fnmatchcase(c, pc_no_br)) or fnmatch.fnmatchcase(c, pc):
+                        return True
             else:
-                if pc in item:
+                if pc in item or (pc_no_br and pc_no_br in no_br):
                     return True
     return False
 
 
 def parse_tokens(s):
-    """Split comma-separated filter string into list of tokens."""
+    """Split comma-separated filter string into list of tokens (supports both ',' and Arabic '،')."""
     if not s:
         return []
-    return [t.strip() for t in s.split(',') if t.strip()]
+    return [t.strip() for t in str(s).replace('،', ',').split(',') if t.strip()]
+
+
+def _resolve_matched_vendor_ids(models, db, uid, password, vnd_patterns):
+    """
+    Resolve partner IDs whose Odoo vendor display_name (e.g. '[905-339] Camp Teck')
+    matches vnd_patterns using fast read_group on purchase.order and product.supplierinfo.
+    """
+    if not vnd_patterns:
+        return []
+    po_v = safe_execute_kw(
+        models, db, uid, password, 'purchase.order', 'read_group',
+        [[['state', 'in', ['purchase', 'done', 'sent', 'draft']]]],
+        {'fields': ['partner_id'], 'groupby': ['partner_id']}
+    ) or []
+    sup_v = safe_execute_kw(
+        models, db, uid, password, 'product.supplierinfo', 'read_group',
+        [[]],
+        {'fields': ['partner_id'], 'groupby': ['partner_id']}
+    ) or []
+    v_map = {}
+    for g in po_v + sup_v:
+        p = g.get('partner_id')
+        if isinstance(p, (list, tuple)) and len(p) >= 2 and p[1]:
+            v_map[p[0]] = str(p[1]).strip()
+    return [vid for vid, vname in v_map.items() if match_wildcards(vname, vnd_patterns)]
 
 
 def clean_html(raw_html):
@@ -148,6 +197,38 @@ def get_active_showrooms():
             'pos_config_ids': cfg_ids
         })
     return showrooms
+
+
+ALLOWED_WAREHOUSE_CODES = {"JEDMK", "JEDPE", "JEDHA", "RIY"}
+
+def get_all_warehouses(exclude_showroom_ids=None):
+    """Returns list of non-POS warehouses (central storage) with their stock location IDs.
+    Strictly limited to the 4 requested warehouses: JEDMK, JEDPE, JEDHA, RIY."""
+    url, db, username, password = get_odoo_credentials()
+    common = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/common')
+    uid = common.authenticate(db, username, password, {})
+    models = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
+
+    all_whs = safe_execute_kw(models, db, uid, password, 'stock.warehouse', 'search_read',
+                               [[['code', 'in', list(ALLOWED_WAREHOUSE_CODES)]]],
+                               {'fields': ['id', 'name', 'code', 'lot_stock_id']})
+
+    exclude = set(exclude_showroom_ids or [])
+    warehouses = []
+    for w in sorted(all_whs, key=lambda x: (x.get('code') or '', x.get('id'))):
+        w_code = (w.get('code') or '').strip().upper()
+        if w['id'] in exclude:
+            continue
+        if w_code not in ALLOWED_WAREHOUSE_CODES:
+            continue
+        warehouses.append({
+            'id': w['id'],
+            'name': w['name'],
+            'code': w.get('code') or '',
+            'lot_stock_id': w['lot_stock_id'][0] if w.get('lot_stock_id') else None,
+            'is_warehouse': True
+        })
+    return warehouses
 
 
 def get_all_product_tags():
@@ -251,15 +332,8 @@ def _build_methodology_sheet(wb):
         ws.column_dimensions[get_column_letter(col_idx)].width = width
     ws.row_dimensions[5].height = 28
 
-    # 4. Data Rows (10 Topics)
+    # 4. Data Rows
     data = [
-        (
-            "نسبة هامش الربح\nMargin (%)",
-            "المشتريات والمالية",
-            "((سعر البيع - سعر التكلفة) / سعر البيع) × 100\nتُحسب بالمعادلة المباشرة وتُنسق كنسبة مئوية بدقة 0.0%",
-            "product.product:\n• list_price (سعر البيع)\n• standard_price (سعر التكلفة)",
-            "يقيس صافي ربحية الصنف. يفيد المشتريات في مراجعة أسعار الشراء مع الموردين، ويفيد المبيعات في تجنب تقديم خصومات تخفض الهامش عن الحد الأدنى المستهدف للربحية."
-        ),
         (
             "أيام التغطية\nDays of Inventory (DOI)",
             "المخزون والمشتريات",
@@ -384,7 +458,9 @@ def generate_report(
     filter_barcode=None,
     filter_name=None,
     filter_tags=None,
+    filter_vendors=None,
     selected_showroom_ids=None,
+    selected_warehouse_ids=None,
     sales_period="this_year",
     custom_date_from=None,
     custom_date_to=None,
@@ -413,7 +489,9 @@ def generate_report(
             'analytics': True
         }
 
-    permissions, _ = load_permissions()
+    permissions = kwargs.get('permissions')
+    if permissions is None:
+        permissions, _ = load_permissions()
 
     def notify(pct, text):
         if progress_callback:
@@ -437,6 +515,7 @@ def generate_report(
     bc_pat  = parse_tokens(filter_barcode)
     nm_pat  = parse_tokens(filter_name)
     tg_pat  = parse_tokens(filter_tags)
+    vnd_pat = parse_tokens(filter_vendors)
 
     # ═════════════════════════════════════════════════════════════════════════
     # PHASE 1 — Parallel Global Lookups
@@ -538,6 +617,14 @@ def generate_report(
     else:
         target_showrooms = all_showrooms
 
+    # Fetch warehouses (non-POS) — exclude those already in showrooms
+    showroom_wh_ids = {s['id'] for s in all_showrooms}
+    all_warehouses = get_all_warehouses(exclude_showroom_ids=showroom_wh_ids)
+    if selected_warehouse_ids is not None:
+        target_warehouses = [w for w in all_warehouses if w['id'] in selected_warehouse_ids]
+    else:
+        target_warehouses = []  # warehouses are opt-in, not shown by default
+
     # ═════════════════════════════════════════════════════════════════════════
     # PHASE 2 — Parallel Concurrent Batch Retrieval & In-Memory Filtering
     # ═════════════════════════════════════════════════════════════════════════
@@ -623,6 +710,48 @@ def generate_report(
                     base_domain.append(['product_tag_ids.name', 'ilike', s])
         need_python_tags = True
 
+    if vnd_pat:
+        matched_v_ids = _resolve_matched_vendor_ids(models, db, uid, password, vnd_pat)
+        if not matched_v_ids:
+            base_domain.append(['id', '=', -1])
+        elif len(matched_v_ids) <= 200:
+            sup_rows = safe_execute_kw(
+                models, db, uid, password, 'product.supplierinfo', 'search_read',
+                [[['partner_id', 'in', matched_v_ids]]],
+                {'fields': ['product_tmpl_id', 'product_id'], 'limit': 50000}
+            ) or []
+            v_tmpl_ids = set()
+            v_prod_ids = set()
+            for sr in sup_rows:
+                tid = sr['product_tmpl_id'][0] if isinstance(sr.get('product_tmpl_id'), (list, tuple)) else sr.get('product_tmpl_id')
+                pid = sr['product_id'][0] if isinstance(sr.get('product_id'), (list, tuple)) else sr.get('product_id')
+                if tid:
+                    v_tmpl_ids.add(tid)
+                if pid:
+                    v_prod_ids.add(pid)
+            po_ids = safe_execute_kw(
+                models, db, uid, password, 'purchase.order', 'search',
+                [[['partner_id', 'in', matched_v_ids], ['state', 'in', ['purchase', 'done', 'sent', 'draft']]]]
+            ) or []
+            if po_ids:
+                pol_rows = safe_execute_kw(
+                    models, db, uid, password, 'purchase.order.line', 'search_read',
+                    [[['order_id', 'in', po_ids]]],
+                    {'fields': ['product_id'], 'limit': 50000}
+                ) or []
+                for pr in pol_rows:
+                    pid = pr['product_id'][0] if isinstance(pr.get('product_id'), (list, tuple)) else None
+                    if pid:
+                        v_prod_ids.add(pid)
+            if v_tmpl_ids and v_prod_ids:
+                base_domain.extend(['|', ['product_tmpl_id', 'in', list(v_tmpl_ids)], ['id', 'in', list(v_prod_ids)]])
+            elif v_tmpl_ids:
+                base_domain.append(['product_tmpl_id', 'in', list(v_tmpl_ids)])
+            elif v_prod_ids:
+                base_domain.append(['id', 'in', list(v_prod_ids)])
+            else:
+                base_domain.append(['id', '=', -1])
+
     all_product_ids = safe_execute_kw(models, db, uid, password,
                                       'product.product', 'search', [base_domain])
     total_all = len(all_product_ids)
@@ -633,7 +762,7 @@ def generate_report(
         'id', 'product_tmpl_id', 'default_code', 'barcode', 'name', 'product_name_arabic',
         'standard_price', 'list_price', 'sales_price', 'pos_min_price',
         'qty_available', 'sales_count',
-        'product_tag_ids', 'x_studio_concatenated_tags',
+        'product_tag_ids', 'x_studio_concatenated_tags', 'categ_id',
         'uom_id', 'taxes_id', 'supplier_taxes_id', 'description'
     ]
 
@@ -792,12 +921,15 @@ def generate_report(
         for s in sup:
             if not s.get('product_tmpl_id'):
                 continue
+            vname = s['partner_id'][1] if s.get('partner_id') else ''
+            if vnd_pat and not match_wildcards(vname, vnd_pat):
+                continue
             tid = s['product_tmpl_id'][0] if isinstance(s['product_tmpl_id'], (list, tuple)) else s['product_tmpl_id']
             p_val = float(s.get('price') or 0.0)
             dp_val = float(s.get('price_discounted') or 0.0)
             if (p_val > 0 or dp_val > 0) and tid not in vmap:
                 vmap[tid] = {
-                    'vendor_name':            s['partner_id'][1] if s.get('partner_id') else '',
+                    'vendor_name':            vname,
                     'vendor_price':           p_val,
                     'vendor_discount':        float(s.get('discount') or 0.0),
                     'vendor_discounted_price':dp_val,
@@ -808,10 +940,13 @@ def generate_report(
         for s in sup:
             if not s.get('product_tmpl_id'):
                 continue
+            vname = s['partner_id'][1] if s.get('partner_id') else ''
+            if vnd_pat and not match_wildcards(vname, vnd_pat):
+                continue
             tid = s['product_tmpl_id'][0] if isinstance(s['product_tmpl_id'], (list, tuple)) else s['product_tmpl_id']
             if tid not in vmap:
                 vmap[tid] = {
-                    'vendor_name':            s['partner_id'][1] if s.get('partner_id') else '',
+                    'vendor_name':            vname,
                     'vendor_price':           float(s.get('price') or 0.0),
                     'vendor_discount':        float(s.get('discount') or 0.0),
                     'vendor_discounted_price':float(s.get('price_discounted') or 0.0),
@@ -836,6 +971,8 @@ def generate_report(
 
     def _fetch_quants():
         target_loc_ids = [s['lot_stock_id'] for s in target_showrooms if s.get('lot_stock_id')]
+        # Also include warehouse stock locations
+        target_loc_ids += [w['lot_stock_id'] for w in target_warehouses if w.get('lot_stock_id')]
         if not target_loc_ids or not filtered_product_ids:
             return {}
         m = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
@@ -863,6 +1000,9 @@ def generate_report(
     elif sales_period == "last_90_days":
         date_filter.append(['date', '>=', (today - timedelta(days=90)).strftime('%Y-%m-%d 00:00:00')])
         period_days = 90
+    elif sales_period in ("last_180_days", "180d"):
+        date_filter.append(['date', '>=', (today - timedelta(days=180)).strftime('%Y-%m-%d 00:00:00')])
+        period_days = 180
     elif sales_period in ("last_365_days", "365d"):
         date_filter.append(['date', '>=', (today - timedelta(days=365)).strftime('%Y-%m-%d 00:00:00')])
         period_days = 365
@@ -898,17 +1038,46 @@ def generate_report(
         return s['id'], {r['product_id'][0]: float(r.get('product_qty') or 0.0)
                          for r in res if r.get('product_id')}
 
-    with ThreadPoolExecutor(max_workers=7 + len(target_showrooms)) as ex:
+    def _fetch_external_ids():
+        if not filtered_tmpl_ids:
+            return {}
+        try:
+            if len(filtered_tmpl_ids) <= 1000:
+                m = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
+                res = safe_execute_kw(m, db, uid, password, 'product.template', 'export_data',
+                                      [filtered_tmpl_ids, ['id']])
+                datas = (res or {}).get('datas', [])
+                return {tid: d[0] if (d and len(d) > 0) else '' for tid, d in zip(filtered_tmpl_ids, datas)}
+            else:
+                def _get_ext_chunk(chunk):
+                    mt = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
+                    return safe_execute_kw(mt, db, uid, password, 'product.template', 'export_data',
+                                           [chunk, ['id']])
+
+                chunks = [filtered_tmpl_ids[i:i+1000] for i in range(0, len(filtered_tmpl_ids), 1000)]
+                ext_map = {}
+                with ThreadPoolExecutor(max_workers=6) as ex:
+                    for chunk, chunk_res in zip(chunks, ex.map(_get_ext_chunk, chunks)):
+                        datas = (chunk_res or {}).get('datas', [])
+                        for tid, d in zip(chunk, datas):
+                            ext_map[tid] = d[0] if (d and len(d) > 0) else ''
+                return ext_map
+        except Exception:
+            return {}
+
+    with ThreadPoolExecutor(max_workers=8 + len(target_showrooms)) as ex:
         f_po_vendors = ex.submit(_fetch_po_purchases)
         f_vendors    = ex.submit(_fetch_vendors)
         f_last_rcv   = ex.submit(_fetch_last_received)
         f_quants     = ex.submit(_fetch_quants)
+        f_ext_ids    = ex.submit(_fetch_external_ids) if permissions.get("id", False) else None
         pos_futures  = {ex.submit(_fetch_pos_sales_for, s): s['id'] for s in target_showrooms}
 
     po_vendor_map     = f_po_vendors.result()
     vendor_tmpl_map   = f_vendors.result()
     last_received_map = f_last_rcv.result()
     stock_map         = f_quants.result()
+    ext_id_map        = f_ext_ids.result() if f_ext_ids else {}
 
     showroom_sales = {}
     for fut, sid in pos_futures.items():
@@ -924,9 +1093,18 @@ def generate_report(
     branch_summary = {
         s['id']: {'code': s['code'], 'name': s['name'],
                   'total_on_hand': 0.0, 'total_cost_value': 0.0,
-                  'total_sales_value': 0.0, 'total_sold_units': 0.0}
+                  'total_sales_value': 0.0, 'total_sold_units': 0.0,
+                  'is_warehouse': False}
         for s in target_showrooms
     }
+    if target_warehouses and permissions.get("Warehouses_OnHand", True):
+        for w in target_warehouses:
+            branch_summary[f"wh_{w['id']}"] = {
+                'code': w['code'], 'name': w['name'],
+                'total_on_hand': 0.0, 'total_cost_value': 0.0,
+                'total_sales_value': 0.0, 'total_sold_units': 0.0,
+                'is_warehouse': True
+            }
 
     export_rows = []
     for r in filtered_records:
@@ -934,6 +1112,7 @@ def generate_report(
         pid    = r['id']
         tid    = prod_to_tmpl.get(pid, 0)
         _, uom = _parse_m2o(r.get('uom_id'))
+        _, categ_name = _parse_m2o(r.get('categ_id'))
 
         code_val    = str(r.get('default_code') or '')
         barcode_val = str(r.get('barcode') or '')
@@ -1025,6 +1204,9 @@ def generate_report(
             v_info = vendor_tmpl_map.get(tid, {})
             last_rcv_qty = last_received_map.get(pid, 0.0)
 
+        if vnd_pat and not match_wildcards(v_info.get('vendor_name', ''), vnd_pat):
+            continue
+
         # Actual Cost: Discounted Price if > 0, else Cost
         v_disc_price = float(v_info.get('vendor_discounted_price') or 0.0)
         actual_cost_val = v_disc_price if v_disc_price > 0 else cost_val
@@ -1066,6 +1248,19 @@ def generate_report(
                 if permissions.get("Showrooms_Sold", True):
                     sh_row_dict[f"{s_name} / Sold"] = sh_sl
 
+        # Warehouse stock (On Hand only, no POS sales)
+        wh_row_dict = {}
+        if target_warehouses and permissions.get("Warehouses_OnHand", True):
+            for w in target_warehouses:
+                lot = w['lot_stock_id']
+                wh_oh = stock_map.get((pid, lot), 0.0) if lot else 0.0
+                w_name = w['name']
+                wh_row_dict[f"{w_name} / On Hand"] = wh_oh
+                w_key = f"wh_{w['id']}"
+                if w_key in branch_summary:
+                    branch_summary[w_key]['total_on_hand'] += wh_oh
+                    branch_summary[w_key]['total_cost_value'] += (wh_oh * cost_val)
+
         # Calculate analytics values
         analysis_oh = sh_oh_total if column_options.get('showrooms', True) else qty_oh
         analysis_sl = sh_sl_total if column_options.get('showrooms', True) else total_sold
@@ -1105,6 +1300,9 @@ def generate_report(
                 continue
 
         row = {}
+        if permissions.get("id", False):
+            row["id"] = ext_id_map.get(tid, "")
+
         if column_options.get('basic_info', True):
             row["Internal Reference"] = code_val
             row["Barcode"] = barcode_val
@@ -1115,6 +1313,7 @@ def generate_report(
                 row["Internal Notes"] = notes_val
             row["Products/Unit of Measure"] = uom
             row["Products/Tags"] = tags_str
+            row["Product Category"] = categ_name
             row["Products/Customer Taxes"] = cust_taxes
             row["Products/Vendor Taxes"] = vend_taxes
 
@@ -1123,8 +1322,6 @@ def generate_report(
                 row["Cost"] = cost_val
             if permissions.get("Sales Price", True):
                 row["Sales Price"] = price_val
-            if permissions.get("هامش الربح (%)", True):
-                row["هامش الربح (%)"] = margin_val
             if permissions.get("Shati Price", True):
                 row["Shati Price"] = shati_val
             if permissions.get("SO Price", True):
@@ -1173,6 +1370,10 @@ def generate_report(
                 row["إجمالي رصيد المعارض"] = sh_oh_total
             if permissions.get("Showrooms_Sold", True):
                 row["إجمالي مبيعات المعارض"] = sh_sl_total
+
+        # Warehouse On Hand columns (after showrooms)
+        if wh_row_dict:
+            row.update(wh_row_dict)
 
         # ── Smart Inventory Analytics & Supply Chain Suggestions ────────────
         if column_options.get('analytics', True):
@@ -1274,6 +1475,10 @@ def generate_report(
         os.makedirs(export_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = os.path.join(export_dir, f"odoo_report_{ts}.xlsx")
+    else:
+        out_dir = os.path.dirname(os.path.abspath(output_path))
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
 
     custom_types_map = load_showroom_types()
     sh_code_map = {s['name']: s.get('code', '') for s in all_showrooms}
@@ -1284,22 +1489,30 @@ def generate_report(
     C_HDR_CARE       = "179B9B"   # Vibrant soft turquoise / فيروزي فاتح
     C_HDR_CARE_L     = "2AA49C"   # Light turquoise sub-header
     C_CARE_ROW_BG    = "E6F7F6"
+    C_HDR_WAREHOUSE   = "B8860B"   # Luxurious Dark Goldenrod / ذهبي ملكي
+    C_HDR_WAREHOUSE_L = "D4AF37"   # Metallic Amber Gold for sub-header
+    C_WAREHOUSE_ROW_BG = "FFFBEB"  # Soft pale warm gold for sheet 2
     C_HDR_SUMMARY    = "833C0C"
+    C_HDR_CALC       = "60497A"   # Regal Purple for calculated results (نتائج محسوبة)
     C_ALT            = "F2F5F9"
     C_TOTALS_BG      = "FFF2CC"
     C_TOTALS_FG      = "7F6000"
     C_WHITE          = "FFFFFF"
     C_BORDER         = "D9D9D9"
 
-    FILL_HDR_MAIN     = PatternFill("solid", fgColor=C_HDR_MAIN)
-    FILL_HDR_SHOWROOM = PatternFill("solid", fgColor=C_HDR_SHOWROOM)
-    FILL_HDR_SUB      = PatternFill("solid", fgColor=C_HDR_SHOWROOM_L)
-    FILL_HDR_CARE     = PatternFill("solid", fgColor=C_HDR_CARE)
-    FILL_HDR_CARE_SUB = PatternFill("solid", fgColor=C_HDR_CARE_L)
-    FILL_CARE_ROW     = PatternFill("solid", fgColor=C_CARE_ROW_BG)
-    FILL_HDR_SUMMARY  = PatternFill("solid", fgColor=C_HDR_SUMMARY)
-    FILL_ALT          = PatternFill("solid", fgColor=C_ALT)
-    FILL_TOTALS       = PatternFill("solid", fgColor=C_TOTALS_BG)
+    FILL_HDR_MAIN          = PatternFill("solid", fgColor=C_HDR_MAIN)
+    FILL_HDR_SHOWROOM      = PatternFill("solid", fgColor=C_HDR_SHOWROOM)
+    FILL_HDR_SUB           = PatternFill("solid", fgColor=C_HDR_SHOWROOM_L)
+    FILL_HDR_CARE          = PatternFill("solid", fgColor=C_HDR_CARE)
+    FILL_HDR_CARE_SUB      = PatternFill("solid", fgColor=C_HDR_CARE_L)
+    FILL_CARE_ROW          = PatternFill("solid", fgColor=C_CARE_ROW_BG)
+    FILL_HDR_WAREHOUSE     = PatternFill("solid", fgColor=C_HDR_WAREHOUSE)
+    FILL_HDR_WAREHOUSE_SUB = PatternFill("solid", fgColor=C_HDR_WAREHOUSE_L)
+    FILL_WAREHOUSE_ROW     = PatternFill("solid", fgColor=C_WAREHOUSE_ROW_BG)
+    FILL_HDR_SUMMARY       = PatternFill("solid", fgColor=C_HDR_SUMMARY)
+    FILL_HDR_CALC          = PatternFill("solid", fgColor=C_HDR_CALC)
+    FILL_ALT               = PatternFill("solid", fgColor=C_ALT)
+    FILL_TOTALS            = PatternFill("solid", fgColor=C_TOTALS_BG)
 
     FONT_HDR_WHITE    = Font(name="Segoe UI", size=9, bold=True, color=C_WHITE)
     FONT_HDR_SUB      = Font(name="Segoe UI", size=8, bold=True, color=C_WHITE)
@@ -1324,6 +1537,9 @@ def generate_report(
     ALIGN_LT  = Alignment(horizontal="left",   vertical="center", wrap_text=False)
 
     COLUMN_SPECS = {
+        "id": {
+            "header": "id", "align": ALIGN_LT, "num_format": "@", "total_type": None, "width_mode": "data_len_capped"
+        },
         "Internal Reference": {
             "header": "Internal\nReference", "align": ALIGN_CTR, "num_format": "@", "total_type": "count", "width_mode": "data_len"
         },
@@ -1348,6 +1564,9 @@ def generate_report(
         "Products/Tags": {
             "header": "Products/Tags", "align": ALIGN_RT, "num_format": "@", "total_type": None, "width_mode": "data_len_capped"
         },
+        "Product Category": {
+            "header": "Product Category", "align": ALIGN_RT, "num_format": "@", "total_type": None, "width_mode": "data_len_capped"
+        },
         "Products/Customer Taxes": {
             "header": "Customer Taxes", "align": ALIGN_CTR, "num_format": "@", "total_type": None, "width_mode": "data_len"
         },
@@ -1359,9 +1578,6 @@ def generate_report(
         },
         "Sales Price": {
             "header": "Price", "align": ALIGN_RT, "num_format": "#,##0.00", "total_type": None, "width_mode": "auto"
-        },
-        "هامش الربح (%)": {
-            "header": "Margin\n(%)", "align": ALIGN_CTR, "num_format": "0.0%", "total_type": None, "width_mode": "auto"
         },
         "Shati Price": {
             "header": "Shati P", "align": ALIGN_RT, "num_format": "#,##0.00", "total_type": None, "width_mode": "auto"
@@ -1470,27 +1686,45 @@ def generate_report(
                       if not k.endswith(SH_OH_SUFFIX) and not k.endswith(SH_SL_SUFFIX)
                       and k not in SUMMARY_COLS]
 
+    wh_code_map = {w['name']: w.get('code', '') for w in all_warehouses}
+    target_wh_names = {w['name'] for w in target_warehouses}
+
     showroom_pairs = []
     seen_sh = set()
+    warehouse_cols = []
+    seen_wh = set()
+
     for k in all_col_keys:
         if k.endswith(SH_OH_SUFFIX):
-            sh_name = k[:-len(SH_OH_SUFFIX)]
-            if sh_name not in seen_sh:
-                seen_sh.add(sh_name)
-                oh_key = k
-                sl_key = f"{sh_name}{SH_SL_SUFFIX}"
-                has_oh = oh_key in first_row_sample
-                has_sl = sl_key in first_row_sample
-                showroom_pairs.append((sh_name, oh_key if has_oh else None, sl_key if has_sl else None))
+            branch_name = k[:-len(SH_OH_SUFFIX)]
+            b_code = wh_code_map.get(branch_name) or sh_code_map.get(branch_name, '')
+            is_wh = (branch_name in target_wh_names or get_showroom_category(b_code, branch_name, custom_types_map) == 'warehouse')
+            if is_wh:
+                if branch_name not in seen_wh:
+                    seen_wh.add(branch_name)
+                    warehouse_cols.append((branch_name, k))
+            else:
+                if branch_name not in seen_sh:
+                    seen_sh.add(branch_name)
+                    oh_key = k
+                    sl_key = f"{branch_name}{SH_SL_SUFFIX}"
+                    has_oh = oh_key in first_row_sample
+                    has_sl = sl_key in first_row_sample
+                    showroom_pairs.append((branch_name, oh_key if has_oh else None, sl_key if has_sl else None))
         elif k.endswith(SH_SL_SUFFIX):
-            sh_name = k[:-len(SH_SL_SUFFIX)]
-            if sh_name not in seen_sh:
-                seen_sh.add(sh_name)
-                showroom_pairs.append((sh_name, None, k))
+            branch_name = k[:-len(SH_SL_SUFFIX)]
+            b_code = wh_code_map.get(branch_name) or sh_code_map.get(branch_name, '')
+            is_wh = (branch_name in target_wh_names or get_showroom_category(b_code, branch_name, custom_types_map) == 'warehouse')
+            if not is_wh and branch_name not in seen_sh:
+                seen_sh.add(branch_name)
+                showroom_pairs.append((branch_name, None, k))
 
     summary_col_keys = [k for k in all_col_keys if k in SUMMARY_COLS]
 
-    USE_TWO_ROWS = bool(showroom_pairs)
+    CALC_COLS = ["التكلفة الفعلية", "هامش الربح الفعلي (%)", "السعر الجديد"]
+    has_calc_cols = any(k in fixed_col_keys for k in CALC_COLS)
+
+    USE_TWO_ROWS = bool(showroom_pairs or warehouse_cols or has_calc_cols)
     HEADER_ROWS = 2 if USE_TWO_ROWS else 1
     DATA_START_ROW = HEADER_ROWS + 1
 
@@ -1502,6 +1736,7 @@ def generate_report(
 
     col_key_to_excel_col = {}
     col_idx = 1
+    calc_col_indices = []
 
     # 1) Fixed columns
     for k in fixed_col_keys:
@@ -1509,20 +1744,59 @@ def generate_report(
         spec = COLUMN_SPECS.get(k, {})
         hdr_text = spec.get("header", k)
 
-        cell1 = ws.cell(row=1, column=col_idx, value=hdr_text)
-        cell1.fill      = FILL_HDR_MAIN
-        cell1.font      = FONT_HDR_WHITE
-        cell1.alignment = ALIGN_HDR
-        cell1.border    = BORDER_DATA
+        if k in CALC_COLS:
+            calc_col_indices.append(col_idx)
+            if USE_TWO_ROWS:
+                cell2 = ws.cell(row=2, column=col_idx, value=hdr_text)
+                cell2.fill      = FILL_HDR_CALC
+                cell2.font      = FONT_HDR_WHITE
+                cell2.alignment = ALIGN_HDR
+                cell2.border    = BORDER_DATA
 
-        if USE_TWO_ROWS:
-            cell2 = ws.cell(row=2, column=col_idx)
-            cell2.fill   = FILL_HDR_MAIN
-            cell2.alignment = ALIGN_HDR
-            cell2.border = BORDER_DATA
-            ws.merge_cells(start_row=1, start_column=col_idx, end_row=2, end_column=col_idx)
+                cell1 = ws.cell(row=1, column=col_idx)
+                cell1.fill      = FILL_HDR_CALC
+                cell1.font      = FONT_HDR_WHITE
+                cell1.alignment = ALIGN_HDR
+                cell1.border    = BORDER_DATA
+            else:
+                cell1 = ws.cell(row=1, column=col_idx, value=hdr_text)
+                cell1.fill      = FILL_HDR_CALC
+                cell1.font      = FONT_HDR_WHITE
+                cell1.alignment = ALIGN_HDR
+                cell1.border    = BORDER_DATA
+        else:
+            cell1 = ws.cell(row=1, column=col_idx, value=hdr_text)
+            cell1.fill      = FILL_HDR_MAIN
+            cell1.font      = FONT_HDR_WHITE
+            cell1.alignment = ALIGN_HDR
+            cell1.border    = BORDER_DATA
+
+            if USE_TWO_ROWS:
+                cell2 = ws.cell(row=2, column=col_idx)
+                cell2.fill   = FILL_HDR_MAIN
+                cell2.alignment = ALIGN_HDR
+                cell2.border = BORDER_DATA
+                ws.merge_cells(start_row=1, start_column=col_idx, end_row=2, end_column=col_idx)
 
         col_idx += 1
+
+    # Merge Row 1 for Calculated Results (نتائج محسوبة)
+    if USE_TWO_ROWS and calc_col_indices:
+        calc_start = min(calc_col_indices)
+        calc_end = max(calc_col_indices)
+        cell_calc_top = ws.cell(row=1, column=calc_start, value="نتائج محسوبة")
+        cell_calc_top.fill      = FILL_HDR_CALC
+        cell_calc_top.font      = FONT_HDR_WHITE
+        cell_calc_top.alignment = ALIGN_HDR
+        cell_calc_top.border    = BORDER_DATA
+        if calc_end > calc_start:
+            ws.merge_cells(start_row=1, start_column=calc_start, end_row=1, end_column=calc_end)
+            for c in range(calc_start, calc_end + 1):
+                c_top = ws.cell(row=1, column=c)
+                c_top.fill      = FILL_HDR_CALC
+                c_top.font      = FONT_HDR_WHITE
+                c_top.alignment = ALIGN_HDR
+                c_top.border    = BORDER_DATA
 
     # 2) Showroom pairs
     for sh_name, oh_key, sl_key in showroom_pairs:
@@ -1563,6 +1837,27 @@ def generate_report(
 
             ws.column_dimensions[get_column_letter(col_idx)].width = 9
             col_idx += 1
+
+    # 2.5) Warehouse columns (Gold Header - On Hand only, placed after showrooms)
+    for wh_name, oh_key in warehouse_cols:
+        col_key_to_excel_col[oh_key] = col_idx
+        wh_start_col = col_idx
+
+        cell_wh = ws.cell(row=1, column=wh_start_col, value=wh_name)
+        cell_wh.fill      = FILL_HDR_WAREHOUSE
+        cell_wh.font      = FONT_HDR_WHITE
+        cell_wh.alignment = ALIGN_HDR
+        cell_wh.border    = BORDER_DATA
+
+        if USE_TWO_ROWS:
+            cell2 = ws.cell(row=2, column=col_idx, value="On Hand")
+            cell2.fill      = FILL_HDR_WAREHOUSE_SUB
+            cell2.font      = FONT_HDR_SUB
+            cell2.alignment = ALIGN_HDR
+            cell2.border    = BORDER_DATA
+
+        ws.column_dimensions[get_column_letter(col_idx)].width = 11
+        col_idx += 1
 
     # 3) Summary & Analytics columns
     for k in summary_col_keys:
@@ -1611,9 +1906,9 @@ def generate_report(
 
     total_excel_cols = col_idx - 1
 
-    ws.row_dimensions[1].height = 28
+    ws.row_dimensions[1].height = 26
     if USE_TWO_ROWS:
-        ws.row_dimensions[2].height = 20
+        ws.row_dimensions[2].height = 32
 
     # ── Fast Column Widths (Sample first 500 rows) ─────────────────────────
     sample_rows = export_rows[:500] if export_rows else []
@@ -1786,7 +2081,7 @@ def generate_report(
         ws.row_dimensions[totals_excel_row].height = 22
 
     # ── Sheet 2: Branch Summary ────────────────────────────────────────────
-    if column_options.get('showrooms', True) and target_showrooms:
+    if column_options.get('showrooms', True) and (target_showrooms or target_warehouses):
         ws2 = wb.create_sheet(title="ملخص المعارض والفروع")
         ws2.views.sheetView[0].rightToLeft = True
 
@@ -1804,9 +2099,19 @@ def generate_report(
         s_rows = sorted(branch_summary.values(), key=lambda x: x['total_on_hand'], reverse=True)
         for r_i, s_data in enumerate(s_rows, 2):
             is_alt = (r_i % 2 == 1)
-            is_care = (get_showroom_category(s_data['code'], s_data['name'], custom_types_map) == 'care')
-            type_label = "🌿 عناية" if is_care else "🏬 معارض"
-            row_fill = FILL_CARE_ROW if is_care else (FILL_ALT if is_alt else None)
+            is_wh = s_data.get('is_warehouse', False)
+            sh_code = s_data.get('code', '')
+            sh_name = s_data.get('name', '')
+            cat = get_showroom_category(sh_code, sh_name, custom_types_map)
+            if is_wh or cat == 'warehouse':
+                type_label = "🏭 مستودع"
+                row_fill = FILL_WAREHOUSE_ROW
+            elif cat == 'care':
+                type_label = "🌿 عناية"
+                row_fill = FILL_CARE_ROW
+            else:
+                type_label = "🏬 معارض"
+                row_fill = FILL_ALT if is_alt else None
 
             vals = [
                 (s_data['code'], ALIGN_CTR, "@"),

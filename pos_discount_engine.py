@@ -166,6 +166,12 @@ def generate_pos_discount_report(
         date_filter = [['order_id.date_order', '>=', start_utc.strftime("%Y-%m-%d %H:%M:%S")]]
         period_title = "آخر 90 يوماً"
 
+    elif sales_period in ("180d", "last_180_days"):
+        start_ksa = (now_ksa - timedelta(days=180)).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_utc = start_ksa - timedelta(hours=3)
+        date_filter = [['order_id.date_order', '>=', start_utc.strftime("%Y-%m-%d %H:%M:%S")]]
+        period_title = "آخر 180 يوماً"
+
     elif sales_period in ("365d", "last_365_days"):
         start_ksa = (now_ksa - timedelta(days=365)).replace(hour=0, minute=0, second=0, microsecond=0)
         start_utc = start_ksa - timedelta(hours=3)

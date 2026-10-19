@@ -44,7 +44,9 @@ def build():
         "--hidden-import", "showroom_config",
         "--hidden-import", "company_profile",
         "--hidden-import", "pos_discount_engine",
+        "--hidden-import", "purchase_report_engine",
         "--hidden-import", "exporter_engine",
+        "--hidden-import", "auto_updater",
         "--hidden-import", "win32com.client",
         "--hidden-import", "pythoncom",
         "--clean",
@@ -54,8 +56,11 @@ def build():
 
     target_exe = os.path.join(work_dir, "OdooReportExporter.exe")
     dist_exe = os.path.join(work_dir, "dist", "OdooReportExporter.exe")
+    rel_exe = os.path.join(work_dir, "releases", "v1.00", "OdooReportExporter.exe")
     if os.path.exists(dist_exe):
         shutil.copy2(dist_exe, target_exe)
+        os.makedirs(os.path.dirname(rel_exe), exist_ok=True)
+        shutil.copy2(dist_exe, rel_exe)
 
     # 2. Build Admin Keygen Tool (Keygen_Admin.exe) for Abdullah Al-Khatib
     print("\n[2/3] Compiling Admin Key Generator (Keygen_Admin.exe)...", flush=True)
@@ -66,6 +71,12 @@ def build():
         "--windowed",
         "--name", "Keygen_Admin",
         "--collect-all", "customtkinter",
+        "--hidden-import", "permissions",
+        "--hidden-import", "auto_updater",
+        "--hidden-import", "licensing",
+        "--hidden-import", "security",
+        "--hidden-import", "cryptography",
+        "--hidden-import", "xmlrpc.client",
         "--clean",
         keygen_script
     ]
@@ -91,6 +102,7 @@ def build():
         "--hidden-import", "xmlrpc.client",
         "--hidden-import", "licensing",
         "--hidden-import", "security",
+        "--hidden-import", "auto_updater",
         "--clean",
         checker_script
     ]

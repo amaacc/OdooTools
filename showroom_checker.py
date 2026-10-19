@@ -19,8 +19,13 @@ import tkinter as tk
 from tkinter import messagebox
 import customtkinter as ctk
 
-from licensing import get_machine_id, is_activated, activate_device
+from licensing import (
+    get_machine_id, is_activated, activate_device, deactivate_device,
+    register_or_update_device_in_odoo, fetch_device_status_from_odoo,
+    show_device_license_dialog
+)
 from security import get_odoo_credentials
+from auto_updater import check_and_prompt_update_async
 
 APP_VERSION = "v1.00"
 APP_FONT = "Segoe UI"
@@ -261,16 +266,135 @@ def query_product_and_needs(barcode_input, showroom, period, need_months, custom
             return float(res[0]['product_qty'])
         return 0.0
 
-    with ThreadPoolExecutor(max_workers=4) as ex:
+    def _fetch_last_receipt():
+        if not lot_stock_id:
+            return {'receipt_type': 'غير محدد', 'receipt_source': '-', 'receipt_date': '-'}
+        m = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
+        moves = safe_execute_kw(
+            m, db, uid, password, 'stock.move', 'search_read',
+            [[
+                ['product_id', '=', pid],
+                ['location_dest_id', '=', lot_stock_id],
+                ['state', '=', 'done']
+            ]],
+            {'fields': ['id', 'date', 'picking_id', 'location_id', 'location_dest_id', 'origin', 'quantity', 'product_uom_qty', 'product_qty'],
+             'order': 'date desc',
+             'limit': 6}
+        )
+        if not moves:
+            return {'receipt_type': 'لا يوجد استلام سابق', 'receipt_source': 'لم يتم استلام الصنف بالمعرض من قبل', 'receipt_date': '-', 'receipt_qty': 0.0}
+
+        target_move = None
+        for mv in moves:
+            loc_name = mv.get('location_id', [0, ''])[1] if mv.get('location_id') else ''
+            if 'Customer' not in loc_name:
+                target_move = mv
+                break
+        if not target_move:
+            target_move = moves[0]
+
+        move_date = target_move.get('date') or '-'
+        picking_val = target_move.get('picking_id')
+        loc_from_name = target_move.get('location_id', [0, ''])[1] if target_move.get('location_id') else ''
+        rcpt_qty = float(target_move.get('quantity') or target_move.get('product_uom_qty') or target_move.get('product_qty') or 0.0)
+
+        receipt_type = 'حركة مخزنية'
+        receipt_source = '-'
+        receipt_date = move_date[:16] if len(move_date) >= 16 else move_date
+
+        if picking_val:
+            p_id = picking_val[0]
+            p_list = safe_execute_kw(
+                m, db, uid, password, 'stock.picking', 'read',
+                [[p_id]],
+                {'fields': ['id', 'name', 'picking_type_code', 'picking_type_id', 'partner_id', 'origin', 'date_done', 'location_id']}
+            )
+            if p_list:
+                p_data = p_list[0]
+                if p_data.get('date_done'):
+                    d_str = str(p_data['date_done'])
+                    receipt_date = d_str[:16] if len(d_str) >= 16 else d_str
+
+                p_code = p_data.get('picking_type_code')
+                origin = p_data.get('origin') or ''
+
+                if p_code == 'incoming':
+                    receipt_type = 'شراء'
+                    partner_val = p_data.get('partner_id')
+                    if partner_val:
+                        part_list = safe_execute_kw(
+                            m, db, uid, password, 'res.partner', 'read',
+                            [[partner_val[0]]],
+                            {'fields': ['id', 'name', 'ref', 'display_name']}
+                        )
+                        if part_list:
+                            part = part_list[0]
+                            v_name = (part.get('name') or '').strip()
+                            v_ref = (part.get('ref') or '').strip()
+                            d_name = part.get('display_name') or ''
+                            if not v_ref and '[' in d_name and ']' in d_name:
+                                try:
+                                    v_ref = d_name.split('[')[1].split(']')[0].strip()
+                                except Exception:
+                                    pass
+                            receipt_source = f"[{v_ref}] {v_name}" if v_ref else v_name
+                    else:
+                        receipt_source = 'مورد غير مسجل'
+
+                elif p_code == 'internal':
+                    receipt_type = 'تحويل'
+                    source_found = False
+                    if origin:
+                        sibs = safe_execute_kw(
+                            m, db, uid, password, 'stock.picking', 'search_read',
+                            [[['origin', '=', origin], ['id', '!=', p_id]]],
+                            {'fields': ['id', 'name', 'picking_type_id', 'location_id'], 'limit': 1}
+                        )
+                        if sibs:
+                            sib = sibs[0]
+                            pt_name = sib.get('picking_type_id', [0, ''])[1]
+                            if ':' in pt_name:
+                                receipt_source = pt_name.split(':')[0].strip()
+                            else:
+                                receipt_source = sib.get('location_id', [0, ''])[1]
+                            source_found = True
+                    if not source_found:
+                        clean_loc = loc_from_name.replace('Physical Locations/', '').replace(': Transit Location', '').replace('`', '').strip()
+                        receipt_source = clean_loc or 'مستودع / معرض التحويل'
+
+                elif 'Customer' in loc_from_name or p_code == 'outgoing':
+                    receipt_type = 'مرتجع مبيعات'
+                    receipt_source = 'مرتجع عميل (POS)'
+                else:
+                    receipt_type = str(p_code)
+                    receipt_source = loc_from_name
+        else:
+            if 'Inventory' in loc_from_name or 'Virtual' in loc_from_name:
+                receipt_type = 'تسوية جردية'
+                receipt_source = 'جرد وتسوية مخزنية'
+            else:
+                receipt_type = 'حركة مخزنية'
+                receipt_source = loc_from_name
+
+        return {
+            'receipt_type': receipt_type,
+            'receipt_source': receipt_source,
+            'receipt_date': receipt_date,
+            'receipt_qty': round(rcpt_qty, 2)
+        }
+
+    with ThreadPoolExecutor(max_workers=5) as ex:
         f_p = ex.submit(_fetch_product)
         f_pkg = ex.submit(_fetch_packagings)
         f_stk = ex.submit(_fetch_stock)
         f_sl = ex.submit(_fetch_sales)
+        f_rcpt = ex.submit(_fetch_last_receipt)
 
     p_data = f_p.result()
     pkg_list = f_pkg.result()
     stock_qty = f_stk.result()
     sold_qty = f_sl.result()
+    rcpt_data = f_rcpt.result()
 
     # Calculations
     monthly_rate = (sold_qty / float(period_days)) * 30.0 if period_days > 0 else (sold_qty / 12.0)
@@ -299,6 +423,10 @@ def query_product_and_needs(barcode_input, showroom, period, need_months, custom
         'target_need': target_need,
         'need_months': need_months,
         'net_need': net_need,
+        'receipt_type': rcpt_data.get('receipt_type') or '-',
+        'receipt_qty': rcpt_data.get('receipt_qty', 0.0),
+        'receipt_source': rcpt_data.get('receipt_source') or '-',
+        'receipt_date': rcpt_data.get('receipt_date') or '-',
         'scanned_code': clean_code,
         'timestamp': datetime.now().strftime("%H:%M:%S")
     }, None
@@ -409,14 +537,28 @@ class ShowroomCheckerApp(ctk.CTk):
                       font=ctk.CTkFont(APP_FONT, 11), fg_color=BRAND_NEUTRAL,
                       command=_copy_mid).pack(pady=(0, 8))
 
+        # Device Name field (for Odoo registry)
+        dname_frame = ctk.CTkFrame(card, fg_color="transparent")
+        dname_frame.pack(fill="x", padx=20, pady=(4, 0))
+
+        ctk.CTkLabel(dname_frame, text="اسم المعرض أو نقطة البيع (للتعريف في Odoo):",
+                     font=ctk.CTkFont(APP_FONT, 11, "bold")).pack(anchor="e", pady=(0, 2))
+
+        dname_entry = ctk.CTkEntry(dname_frame, height=36, font=ctk.CTkFont(APP_FONT, 11),
+                                   placeholder_text="مثال: معرض الشوقية - كاشير 1", justify="right")
+        default_pc_name = os.environ.get("COMPUTERNAME", "")
+        if default_pc_name:
+            dname_entry.insert(0, f"معرض ({default_pc_name})")
+        dname_entry.pack(fill="x")
+
         key_frame = ctk.CTkFrame(card, fg_color="transparent")
-        key_frame.pack(fill="x", padx=20, pady=(5, 0))
+        key_frame.pack(fill="x", padx=20, pady=(6, 0))
 
         ctk.CTkLabel(key_frame, text="مفتاح التفعيل (Activation Key):",
                      font=ctk.CTkFont(APP_FONT, 11, "bold")).pack(anchor="e", pady=(0, 4))
 
         key_entry = ctk.CTkEntry(key_frame, height=40, font=ctk.CTkFont("Consolas", 14, "bold"),
-                                 placeholder_text="XXXX-XXXX-XXXX-XXXX", justify="center")
+                                 placeholder_text="XXXX-XXXX-XXXX-XXXX (بشرطات أو بدون)", justify="center")
         key_entry.pack(fill="x")
 
         status_lbl = ctk.CTkLabel(card, text="", font=ctk.CTkFont(APP_FONT, 11))
@@ -427,9 +569,10 @@ class ShowroomCheckerApp(ctk.CTk):
             if not key:
                 status_lbl.configure(text="⚠️ يرجى إدخال مفتاح التفعيل.", text_color=BRAND_RED)
                 return
-            ok, msg = activate_device(key)
+            d_name = dname_entry.get().strip()
+            ok, msg = activate_device(key, device_name=d_name, app_name="ShowroomChecker (Windows)", app_version=APP_VERSION)
             if ok:
-                messagebox.showinfo("تم التفعيل بنجاح", "🎉 تم تفعيل هذا الجهاز بنجاح! جاري فتح البرنامج...")
+                messagebox.showinfo("تم التفعيل بنجاح", "🎉 تم تفعيل هذا الجهاز بنجاح وتسجيله في Odoo!\nجاري فتح البرنامج...")
                 self._center_window(1100, 740)
                 self.resizable(True, True)
                 self._build_main_ui()
@@ -449,6 +592,9 @@ class ShowroomCheckerApp(ctk.CTk):
             w.destroy()
 
         self.resizable(True, True)
+
+        # Check authorization with central Odoo registry in background
+        self._check_device_status_with_odoo()
 
         # ── Top Bar ──────────────────────────────────────────────────────────
         top_bar = ctk.CTkFrame(self, fg_color=CARD_DARK_BG if self.settings.get("theme") == "Dark" else CARD_LIGHT_BG,
@@ -482,6 +628,12 @@ class ShowroomCheckerApp(ctk.CTk):
                                         fg_color=BRAND_NEUTRAL, font=ctk.CTkFont(APP_FONT, 11),
                                         command=self._toggle_theme)
         self._theme_btn.pack(side="left", padx=4)
+
+        self._lic_btn = ctk.CTkButton(left_f, text="⚠️ ترخيص Odoo", width=120, height=30,
+                                      fg_color=("#D97706", "#B45309"), hover_color="#92400E",
+                                      font=ctk.CTkFont(APP_FONT, 11, "bold"),
+                                      command=self._open_license_sync_dialog)
+        # Note: self._lic_btn is NOT packed by default. It is only shown if device is not in Odoo.
 
         self._status_badge = ctk.CTkLabel(left_f, text="🟢 متصل بنظام Odoo", font=ctk.CTkFont(APP_FONT, 11),
                                           text_color=BRAND_GREEN)
@@ -709,6 +861,41 @@ class ShowroomCheckerApp(ctk.CTk):
         self.lbl_val_pkg = ctk.CTkLabel(f_pkg, text="-", font=ctk.CTkFont("Consolas", 12))
         self.lbl_val_pkg.pack(anchor="e")
 
+        # Last Receipt Details Box (أحدث استلام للمعرض)
+        rcpt_box = ctk.CTkFrame(prod_inner, fg_color=("gray95", "#0F172A"), corner_radius=6)
+        rcpt_box.pack(fill="x", pady=(6, 2))
+
+        rcpt_inner = ctk.CTkFrame(rcpt_box, fg_color="transparent")
+        rcpt_inner.pack(fill="x", padx=10, pady=8)
+
+        # 1. Receipt Type (نوع الاستلام)
+        f_rcpt_type = ctk.CTkFrame(rcpt_inner, fg_color="transparent")
+        f_rcpt_type.pack(side="right", padx=(0, 10))
+        ctk.CTkLabel(f_rcpt_type, text="📦 نوع آخر استلام:", font=ctk.CTkFont(APP_FONT, 10, "bold"), text_color=BRAND_NEUTRAL).pack(anchor="e")
+        self.lbl_val_receipt_type = ctk.CTkLabel(f_rcpt_type, text="-", font=ctk.CTkFont(APP_FONT, 12, "bold"))
+        self.lbl_val_receipt_type.pack(anchor="e")
+
+        # 2. Receipt Qty (آخر كمية مستلمة)
+        f_rcpt_qty = ctk.CTkFrame(rcpt_inner, fg_color="transparent")
+        f_rcpt_qty.pack(side="right", padx=(0, 10))
+        ctk.CTkLabel(f_rcpt_qty, text="🔢 آخر كمية مستلمة:", font=ctk.CTkFont(APP_FONT, 10, "bold"), text_color=BRAND_NEUTRAL).pack(anchor="e")
+        self.lbl_val_receipt_qty = ctk.CTkLabel(f_rcpt_qty, text="-", font=ctk.CTkFont(APP_FONT, 13, "bold"), text_color=BRAND_GOLD)
+        self.lbl_val_receipt_qty.pack(anchor="e")
+
+        # 3. Receipt Source (المصدر: المورد برقم المورد أو المعرض/المستودع المحول منه)
+        f_rcpt_src = ctk.CTkFrame(rcpt_inner, fg_color="transparent")
+        f_rcpt_src.pack(side="right", fill="x", expand=True, padx=10)
+        ctk.CTkLabel(f_rcpt_src, text="🏢 جهة التوريد / المصدر:", font=ctk.CTkFont(APP_FONT, 10, "bold"), text_color=BRAND_NEUTRAL).pack(anchor="e")
+        self.lbl_val_receipt_src = ctk.CTkLabel(f_rcpt_src, text="-", font=ctk.CTkFont(APP_FONT, 12, "bold"), text_color=BRAND_BLUE)
+        self.lbl_val_receipt_src.pack(anchor="e")
+
+        # 3. Receipt Date (تاريخ الاستلام)
+        f_rcpt_date = ctk.CTkFrame(rcpt_inner, fg_color="transparent")
+        f_rcpt_date.pack(side="left", padx=(10, 0))
+        ctk.CTkLabel(f_rcpt_date, text="📅 تاريخ الاستلام:", font=ctk.CTkFont(APP_FONT, 10, "bold"), text_color=BRAND_NEUTRAL).pack(anchor="w")
+        self.lbl_val_receipt_date = ctk.CTkLabel(f_rcpt_date, text="-", font=ctk.CTkFont("Consolas", 12, "bold"))
+        self.lbl_val_receipt_date.pack(anchor="w")
+
         # ── 5. Recent Scans Log Table ─────────────────────────────────────────
         hist_header = ctk.CTkFrame(main_container, fg_color="transparent")
         hist_header.pack(fill="x", pady=(4, 4))
@@ -767,6 +954,10 @@ class ShowroomCheckerApp(ctk.CTk):
         self.lbl_val_code.configure(text="-")
         self.lbl_val_bc.configure(text="-")
         self.lbl_val_pkg.configure(text="-")
+        self.lbl_val_receipt_type.configure(text="-", text_color=BRAND_NEUTRAL)
+        self.lbl_val_receipt_qty.configure(text="-", text_color=BRAND_GOLD)
+        self.lbl_val_receipt_src.configure(text="-", text_color=BRAND_BLUE)
+        self.lbl_val_receipt_date.configure(text="-")
         self.lbl_stock_val.configure(text="-", text_color=BRAND_BLUE)
         self.lbl_stock_unit.configure(text="الرصيد الفعلي المتوفر")
         self.lbl_sold_val.configure(text="-", text_color=BRAND_GOLD)
@@ -806,6 +997,57 @@ class ShowroomCheckerApp(ctk.CTk):
             self._trigger_lookup(code_override=self.current_raw_input)
         else:
             self._refocus_barcode()
+
+    def _check_device_status_with_odoo(self):
+        """Checks if device is authorized in Odoo registry. Only shows sync button if NOT added."""
+        def worker():
+            try:
+                st = fetch_device_status_from_odoo()
+                if st == "blocked":
+                    self.after(0, self._handle_remote_device_blocked)
+                elif st == "not_found":
+                    self.after(0, self._show_license_sync_button)
+                elif st == "active":
+                    self.after(0, self._hide_license_sync_button)
+                    register_or_update_device_in_odoo(
+                        app_name="ShowroomChecker (Windows)",
+                        app_version=APP_VERSION
+                    )
+                    # Check for updates in background
+                    check_and_prompt_update_async(self, "ShowroomChecker", APP_VERSION)
+            except Exception:
+                pass
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_license_sync_button(self):
+        if hasattr(self, '_lic_btn') and self._lic_btn.winfo_exists():
+            if not self._lic_btn.winfo_ismapped():
+                if hasattr(self, '_status_badge') and self._status_badge.winfo_exists():
+                    self._lic_btn.pack(side="left", padx=4, before=self._status_badge)
+                else:
+                    self._lic_btn.pack(side="left", padx=4)
+
+    def _hide_license_sync_button(self):
+        if hasattr(self, '_lic_btn') and self._lic_btn.winfo_exists():
+            self._lic_btn.pack_forget()
+
+    def _open_license_sync_dialog(self):
+        show_device_license_dialog(
+            self,
+            "ShowroomChecker (Windows)",
+            APP_VERSION,
+            on_deactivate=self._build_activation_screen,
+            on_synced=self._hide_license_sync_button
+        )
+
+    def _handle_remote_device_blocked(self):
+        """Immediately terminates local activation when revoked remotely from Odoo."""
+        deactivate_device()
+        messagebox.showerror(
+            "🚫 تم إلغاء ترخيص هذا الجهاز",
+            "تم إنهاء وتجميد ترخيص هذا الجهاز من قبل إدارة النظام عبر Odoo.\nيرجى التواصل مع الإدارة لإعادة تفعيل الجهاز."
+        )
+        self._build_activation_screen()
 
     def _apply_custom_dates(self):
         """Applies manual custom date range and updates currently loaded product."""
@@ -1007,6 +1249,10 @@ class ShowroomCheckerApp(ctk.CTk):
             self.lbl_val_code.configure(text="-")
             self.lbl_val_bc.configure(text="-")
             self.lbl_val_pkg.configure(text="-")
+            self.lbl_val_receipt_type.configure(text="-", text_color=BRAND_NEUTRAL)
+            self.lbl_val_receipt_qty.configure(text="-", text_color=BRAND_GOLD)
+            self.lbl_val_receipt_src.configure(text="-", text_color=BRAND_BLUE)
+            self.lbl_val_receipt_date.configure(text="-")
             self.lbl_stock_val.configure(text="-", text_color=BRAND_BLUE)
             self.lbl_sold_val.configure(text="-", text_color=BRAND_GOLD)
             self.lbl_need_val.configure(text="-", text_color=BRAND_NEUTRAL)
@@ -1049,6 +1295,37 @@ class ShowroomCheckerApp(ctk.CTk):
         self.lbl_val_code.configure(text=res['default_code'])
         self.lbl_val_bc.configure(text=res['barcode'])
         self.lbl_val_pkg.configure(text=res['packaging_barcodes'])
+
+        # Last Receipt Information
+        rcpt_t = res.get('receipt_type') or '-'
+        rcpt_s = res.get('receipt_source') or '-'
+        rcpt_d = res.get('receipt_date') or '-'
+        rcpt_q = res.get('receipt_qty', 0.0)
+
+        if 'شراء' in rcpt_t:
+            t_color = BRAND_GREEN
+            t_icon = "🛒 "
+        elif 'تحويل' in rcpt_t:
+            t_color = BRAND_GOLD
+            t_icon = "🔄 "
+        elif 'مرتجع' in rcpt_t:
+            t_color = BRAND_RED
+            t_icon = "↩️ "
+        elif 'تسوية' in rcpt_t:
+            t_color = BRAND_NEUTRAL
+            t_icon = "⚖️ "
+        else:
+            t_color = BRAND_NEUTRAL
+            t_icon = ""
+
+        disp_type = f"{t_icon}{rcpt_t}" if t_icon and not rcpt_t.startswith(t_icon) else rcpt_t
+        self.lbl_val_receipt_type.configure(text=disp_type, text_color=t_color)
+        if rcpt_q > 0:
+            self.lbl_val_receipt_qty.configure(text=f"{rcpt_q:g} {res['uom']}", text_color=BRAND_GOLD)
+        else:
+            self.lbl_val_receipt_qty.configure(text="-" if rcpt_t == "لا يوجد استلام سابق" else f"0 {res['uom']}", text_color=BRAND_NEUTRAL)
+        self.lbl_val_receipt_src.configure(text=rcpt_s, text_color=BRAND_BLUE)
+        self.lbl_val_receipt_date.configure(text=rcpt_d)
 
         # Stock & Sales
         self.lbl_stock_val.configure(text=f"{res['stock_qty']:g}")

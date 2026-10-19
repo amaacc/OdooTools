@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">فحص رصيد المعرض</string>
+    <string name="change_showroom">تغيير 🏬</string>
+    <string name="select_showroom_title">اختر المعرض</string>
+    <string name="search_showroom_hint">ابحث بالاسم أو كود الفرع...</string>
+    <string name="no_showroom_selected">اضغط لاختيار المعرض</string>
+
+    <string name="scan_prompt">📷 وجّه الماسح وامسح الباركود</string>
+    <string name="scan_hint_sub">أو اكتب الباركود واضغط Enter</string>
+    <string name="searching">جاري الفحص...</string>
+
+    <string name="stock_available">متوفر في المعرض</string>
+    <string name="stock_out_of_stock">غير متوفر (نفد)</string>
+    <string name="stock_deficit">عجز مخزني</string>
+    <string name="product_not_found">غير معرّف في النظام ⚠️</string>
+    <string name="network_error">خطأ في الاتصال بالسيرفر</string>
+    <string name="unit_piece">حبة</string>
+
+    <string name="settings_title">⚙️ الإعدادات والمعلومات</string>
+    <string name="test_connection">🔗 اختبار الاتصال بسيرفر أودو</string>
+    <string name="refresh_showrooms">🔄 تحديث قائمة المعارض من أودو</string>
+    <string name="device_info_title">بيانات الجهاز والترخيص</string>
+    <string name="device_id_label">معرف الجهاز (Device ID):</string>
+    <string name="copy_id">نسخ المعرف</string>
+    <string name="license_status_label">حالة التفعيل:</string>
+    <string name="activated">✅ مفعل ومرخص للاستخدام</string>
+    <string name="not_activated">❌ غير مفعل — يلزم إدخال كود التفعيل</string>
+    <string name="developer_credit">تصميم وتطوير: عبدالله الخطيب\nشركة العسلي التجارية — إصدار v1.00</string>
+</resources>

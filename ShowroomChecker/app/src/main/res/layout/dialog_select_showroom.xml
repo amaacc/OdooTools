@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:layoutDirection="rtl"
+    android:background="@color/white">
+
+    <!-- Header -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="12dp">
+
+        <ImageView
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:src="@drawable/ic_store"
+            app:tint="@color/primary"
+            android:contentDescription="Store" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:text="@string/select_showroom_title"
+            android:textColor="@color/text_primary"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <ImageButton
+            android:id="@+id/btnDialogClose"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_clear"
+            android:contentDescription="Close" />
+    </LinearLayout>
+
+    <!-- Search filter -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="12dp">
+
+        <EditText
+            android:id="@+id/etSearchShowroom"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:background="@drawable/bg_rounded_card"
+            android:hint="@string/search_showroom_hint"
+            android:textColor="@color/text_primary"
+            android:textColorHint="@color/text_muted"
+            android:textSize="14sp"
+            android:paddingStart="12dp"
+            android:paddingEnd="36dp"
+            android:inputType="text"
+            android:singleLine="true" />
+
+        <ImageButton
+            android:id="@+id/btnClearShowroomFilter"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_gravity="center_vertical|end"
+            android:layout_marginEnd="6dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_clear"
+            android:contentDescription="Clear"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <!-- Loading Bar -->
+    <ProgressBar
+        android:id="@+id/progressShowrooms"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:indeterminateTint="@color/primary"
+        android:visibility="gone"
+        android:layout_margin="16dp" />
+
+    <!-- Showrooms List -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recyclerDialogShowrooms"
+        android:layout_width="match_parent"
+        android:layout_height="320dp"
+        android:scrollbars="vertical" />
+
+    <TextView
+        android:id="@+id/txtNoShowroomsFound"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="لا توجد نتائج مطابقة"
+        android:textColor="@color/text_muted"
+        android:textSize="14sp"
+        android:textAlignment="center"
+        android:padding="24dp"
+        android:visibility="gone" />
+
+</LinearLayout>

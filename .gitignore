@@ -1,3 +1,12 @@
 .venv/
 __pycache__/
 *.pyc
+scratch/
+build/
+dist/
+*.log
+local.properties
+.gradle/
+**/build/
+**/.gradle/
+**/local.properties

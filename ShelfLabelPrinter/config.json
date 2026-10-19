@@ -1,0 +1,12 @@
+{
+    "logo1_path": "D:/OLD/My/Logos/AssaliCareWord.png",
+    "logo2_path": "D:/OLD/My/Logos/AssaliCareLogo.png",
+    "paper_type": "a4",
+    "start_position": 1,
+    "draw_cut_guides": true,
+    "draw_roll_border": false,
+    "selected_printer_a4": "[الطابعة الافتراضية للنظام]",
+    "selected_printer_roll": "",
+    "default_printer": "",
+    "auto_clear_after_print": false
+}

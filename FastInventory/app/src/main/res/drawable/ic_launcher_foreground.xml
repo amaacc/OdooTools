@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Barcode scanner icon -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,35 L30,73 L34,73 L34,35 Z M38,35 L38,73 L40,73 L40,35 Z M44,35 L44,73 L50,73 L50,35 Z M54,35 L54,73 L56,73 L56,35 Z M60,35 L60,73 L64,73 L64,35 Z M68,35 L68,73 L70,73 L70,35 Z M74,35 L74,73 L78,73 L78,35 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24,28 L24,42 L28,42 L28,32 L38,32 L38,28 Z M70,28 L70,32 L80,32 L80,42 L84,42 L84,28 Z M24,66 L24,80 L38,80 L38,76 L28,76 L28,66 Z M80,66 L80,76 L70,76 L70,80 L84,80 L84,66 Z" />
+</vector>

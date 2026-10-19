@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">الجرد السريع</string>
+    <string name="app_subname">منظومة الجرد الميداني والمطابقة الفورية — شركة العسلي</string>
+
+    <!-- Scan screen strings -->
+    <string name="scan_prompt_title">📷 وجّه الماسح الضوئي نحو الباركود</string>
+    <string name="scan_prompt_sub">يدعم ماسح Honeywell / الكاميرا / الإدخال السريع</string>
+    <string name="blind_count_notice">🔒 وضع الجرد الأعمى مفعّل (الرصيد الدفتري والفروقات محجوبة أثناء الجرد لمنع الانحياز)</string>
+    <string name="scanned_code_label">الباركود:</string>
+    <string name="counted_qty_label">الكمية المحصورة:</string>
+    <string name="unit_label">حبة</string>
+    <string name="carton_detected_prefix">📦 كرتون / عبوة:</string>
+    <string name="btn_camera_scan">📷 كاميرا الجوال</string>
+    <string name="btn_custom_qty">✏️ إدخال كمية</string>
+    <string name="btn_undo">↩️ تراجع (-1)</string>
+    <string name="btn_reset_item">🗑️ إلغاء الصنف</string>
+
+    <!-- Navigation & Bottom bar -->
+    <string name="total_items_label">عدد الأصناف:</string>
+    <string name="total_units_label">إجمالي الحبات:</string>
+    <string name="btn_view_list">📋 قائمة الجرد</string>
+    <string name="btn_consolidator">🔀 دمج ملفات الأجهزة</string>
+    <string name="btn_export_report">📊 تقرير الفروقات والإرسال</string>
+    <string name="btn_settings">⚙️ الإعدادات</string>
+
+    <!-- Zone / Session -->
+    <string name="active_zone_prefix">المنطقة / الرف:</string>
+    <string name="active_session_prefix">جلسة الجرد:</string>
+    <string name="default_zone_name">الرف العام</string>
+    <string name="change_zone">تغيير</string>
+
+    <!-- Consolidator Screen -->
+    <string name="consolidator_title">دمج ومطابقة جرد الأجهزة المتعددة</string>
+    <string name="consolidator_desc">اختر ملفات الجرد المصدرة من أجهزة الهاندهيل الأخرى لدمجها ومطابقتها آلياً مع رصيد Odoo</string>
+    <string name="btn_add_files">➕ اختيار ملفات الجرد (CSV / XLSX)</string>
+    <string name="btn_run_consolidation">🚀 دمج ومطابقة الفروقات الآن</string>
+    <string name="loaded_files_count">الملفات المحددة: %d ملف</string>
+
+    <!-- Settings Screen -->
+    <string name="settings_title">⚙️ إعدادات الجرد والربط مع Odoo</string>
+    <string name="server_url">عنوان سيرفر Odoo (URL)</string>
+    <string name="database">اسم قاعدة البيانات (Database)</string>
+    <string name="username">اسم المستخدم (Username)</string>
+    <string name="password">كلمة المرور (Password / API Key)</string>
+    <string name="location_name">موقع المخزن / المعرض في Odoo</string>
+    <string name="test_connection">🔗 اختبار الاتصال بـ Odoo</string>
+    <string name="download_catalog">📥 مزامنة دليل الأصناف والعبوات</string>
+    <string name="catalog_status_never">لم يتم التنزيل بعد</string>
+    <string name="catalog_status_updated">تم حفظ %1$d صنف و %2$d عبوة (آخر تحديث: %3$s)</string>
+    <string name="email_target">البريد الإلكتروني المستلم للتقارير</string>
+    <string name="smtp_enable">✉️ تفعيل الإرسال التلقائي عبر خادم SMTP (صامت)</string>
+    <string name="smtp_host">خادم SMTP (مثال: smtp.gmail.com)</string>
+    <string name="smtp_port">المنفذ (Port)</string>
+    <string name="smtp_user">مستخدم SMTP</string>
+    <string name="smtp_pass">كلمة مرور تطبيق SMTP</string>
+    <string name="smtp_ssl">استخدام تشفير SSL / TLS</string>
+    <string name="device_name_label">اسم هذا الجهاز / الموظف</string>
+    <string name="save_settings">💾 حفظ كافة الإعدادات</string>
+
+    <!-- Activation Screen -->
+    <string name="activation_title">تفعيل ترخيص الجهاز</string>
+    <string name="device_id_label">معرّف هذا الجهاز (Device ID):</string>
+    <string name="license_key_label">أدخل مفتاح التفعيل:</string>
+    <string name="btn_activate">تفعيل الآن</string>
+    <string name="btn_copy_device_id">نسخ معرّف الجهاز</string>
+    <string name="license_invalid">مفتاح التفعيل غير صحيح أو لا يطابق هذا الجهاز</string>
+    <string name="license_active">الجهاز مفعل ومرخص بنجاح</string>
+
+    <!-- Common -->
+    <string name="yes">نعم</string>
+    <string name="no">إلغاء</string>
+    <string name="ok">موافق</string>
+    <string name="sar">ر.س</string>
+</resources>
