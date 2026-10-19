@@ -22,6 +22,19 @@ class SettingsManager(context: Context) {
         context.getSharedPreferences("fast_inventory_plain_prefs", Context.MODE_PRIVATE)
     }
 
+    init {
+        // Security & Cleanup: Purge any legacy saved local IP or exposed credentials from previous versions
+        val savedUrl = prefs.getString("server_url", null)
+        if (savedUrl != null) {
+            prefs.edit()
+                .remove("server_url")
+                .remove("database")
+                .remove("username")
+                .remove("password")
+                .apply()
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Theme Management (Dark & Light)
     // ─────────────────────────────────────────────────────────────────────────
@@ -42,44 +55,14 @@ class SettingsManager(context: Context) {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Odoo Credentials
+    // Odoo Credentials (Always encrypted in memory, never exposed in UI)
     // ─────────────────────────────────────────────────────────────────────────
-    fun isConfigured(): Boolean {
-        return getServerUrl().isNotBlank() && getDatabase().isNotBlank() && getUsername().isNotBlank() && getPassword().isNotBlank()
-    }
+    fun isConfigured(): Boolean = true
 
-    fun getServerUrl(): String {
-        val s = prefs.getString("server_url", "") ?: ""
-        if (s.isNotBlank()) return s
-        return try { AppSecurity.getOdooConfig().url } catch (e: Exception) { "" }
-    }
-
-    fun getDatabase(): String {
-        val s = prefs.getString("database", "") ?: ""
-        if (s.isNotBlank()) return s
-        return try { AppSecurity.getOdooConfig().db } catch (e: Exception) { "" }
-    }
-
-    fun getUsername(): String {
-        val s = prefs.getString("username", "") ?: ""
-        if (s.isNotBlank()) return s
-        return try { AppSecurity.getOdooConfig().user } catch (e: Exception) { "" }
-    }
-
-    fun getPassword(): String {
-        val s = prefs.getString("password", "") ?: ""
-        if (s.isNotBlank()) return s
-        return try { AppSecurity.getOdooConfig().password } catch (e: Exception) { "" }
-    }
-
-    fun saveOdooCredentials(url: String, db: String, user: String, pass: String) {
-        prefs.edit().apply {
-            putString("server_url", url.trim())
-            putString("database", db.trim())
-            putString("username", user.trim())
-            putString("password", pass.trim())
-        }.apply()
-    }
+    fun getServerUrl(): String = AppSecurity.getOdooConfig().url
+    fun getDatabase(): String = AppSecurity.getOdooConfig().db
+    fun getUsername(): String = AppSecurity.getOdooConfig().user
+    fun getPassword(): String = AppSecurity.getOdooConfig().password
 
     // ─────────────────────────────────────────────────────────────────────────
     // Device & Session
@@ -96,7 +79,7 @@ class SettingsManager(context: Context) {
     fun getTargetEmail(): String = prefs.getString("target_email", "") ?: ""
     fun setTargetEmail(email: String) = prefs.edit().putString("target_email", email.trim()).apply()
 
-    // SMTP Settings
+    // SMTP Settings (Optional for background export)
     fun isSmtpEnabled(): Boolean = prefs.getBoolean("smtp_enabled", false)
     fun setSmtpEnabled(enabled: Boolean) = prefs.edit().putBoolean("smtp_enabled", enabled).apply()
 

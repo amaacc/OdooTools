@@ -69,16 +69,6 @@ object AppSecurity {
      * Gets effective OdooClient: uses custom user settings if entered, else falls back to embedded company credentials.
      */
     fun getEffectiveOdooClient(context: Context): OdooClient {
-        val settings = SettingsManager(context)
-        val url = settings.getServerUrl()
-        val db = settings.getDatabase()
-        val user = settings.getUsername()
-        val pass = settings.getPassword()
-
-        if (url.isNotBlank() && db.isNotBlank() && user.isNotBlank() && pass.isNotBlank()) {
-            return OdooClient(url, db, user, pass)
-        }
-
         val def = getOdooConfig()
         return OdooClient(def.url, def.db, def.user, def.password)
     }

@@ -33,10 +33,6 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var etDefaultZone: TextInputEditText
     private lateinit var btnOpenActivation: Button
 
-    private lateinit var etServerUrl: TextInputEditText
-    private lateinit var etDatabase: TextInputEditText
-    private lateinit var etUsername: TextInputEditText
-    private lateinit var etPassword: TextInputEditText
     private lateinit var btnTestOdoo: Button
     private lateinit var btnDownloadCatalog: Button
     private lateinit var txtCatalogStatus: TextView
@@ -76,10 +72,6 @@ class SettingsActivity : AppCompatActivity() {
         etDefaultZone = findViewById(R.id.etDefaultZone)
         btnOpenActivation = findViewById(R.id.btnOpenActivation)
 
-        etServerUrl = findViewById(R.id.etServerUrl)
-        etDatabase = findViewById(R.id.etDatabase)
-        etUsername = findViewById(R.id.etUsername)
-        etPassword = findViewById(R.id.etPassword)
         btnTestOdoo = findViewById(R.id.btnTestOdoo)
         btnDownloadCatalog = findViewById(R.id.btnDownloadCatalog)
         txtCatalogStatus = findViewById(R.id.txtCatalogStatus)
@@ -108,12 +100,6 @@ class SettingsActivity : AppCompatActivity() {
         // Device
         etDeviceName.setText(settingsManager.getDeviceName())
         etDefaultZone.setText(settingsManager.getDefaultZone())
-
-        // Odoo (Uses company defaults if not entered)
-        etServerUrl.setText(settingsManager.getServerUrl())
-        etDatabase.setText(settingsManager.getDatabase())
-        etUsername.setText(settingsManager.getUsername())
-        etPassword.setText(settingsManager.getPassword())
 
         // Email & SMTP
         etTargetEmail.setText(settingsManager.getTargetEmail())
@@ -177,65 +163,49 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun testOdooConnection() {
-        val url = etServerUrl.text.toString().trim()
-        val dbName = etDatabase.text.toString().trim()
-        val user = etUsername.text.toString().trim()
-        val pass = etPassword.text.toString().trim()
-
-        if (url.isBlank() || dbName.isBlank() || user.isBlank() || pass.isBlank()) {
-            Toast.makeText(this, "يرجى تعبئة كافة حقول الاتصال بـ Odoo", Toast.LENGTH_SHORT).show()
-            return
-        }
-
         btnTestOdoo.isEnabled = false
-        btnTestOdoo.text = "جاري الفحص والتسجيل..."
+        btnTestOdoo.text = "جاري الفحص والتسجيل في Odoo..."
 
         Thread {
-            val client = OdooClient(url, dbName, user, pass)
-            val (ok, msg) = client.testConnection()
-            var regOk = false
-            if (ok) {
-                try {
+            try {
+                val client = AppSecurity.getEffectiveOdooClient(this)
+                val (ok, msg) = client.testConnection()
+                var regOk = false
+                if (ok) {
                     val deviceId = LicenseManager.getDeviceId(this)
                     val devName = etDeviceName.text.toString().trim().ifBlank { "الهاندهيل 1" }
                     val model = "${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})"
                     val status = client.registerOrUpdateDevice(deviceId, devName, model, "FastInventory", "1.02")
                     regOk = (status != "unknown")
-                } catch (e: Exception) {
-                    e.printStackTrace()
                 }
-            }
 
-            runOnUiThread {
-                btnTestOdoo.isEnabled = true
-                btnTestOdoo.text = "🔗 اختبار وتسجيل الجهاز"
-                val feedback = if (ok) {
-                    if (regOk) "✅ تم الاتصال بنجاح وتحديث تسجيل الجهاز في Odoo!"
-                    else "✅ الاتصال ناجح، ولكن تعذر تحديث بيانات الجهاز: $msg"
-                } else msg
-                Toast.makeText(this, feedback, Toast.LENGTH_LONG).show()
+                runOnUiThread {
+                    btnTestOdoo.isEnabled = true
+                    btnTestOdoo.text = "🔗 فحص الاتصال وتحديث تسجيل الجهاز"
+                    val feedback = if (ok) {
+                        if (regOk) "✅ تم الاتصال بنجاح وتحديث تسجيل الجهاز في Odoo!"
+                        else "✅ الاتصال ناجح، ولكن تعذر تحديث بيانات الجهاز: $msg"
+                    } else "❌ فشل الاتصال بـ Odoo: $msg"
+                    Toast.makeText(this, feedback, Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    btnTestOdoo.isEnabled = true
+                    btnTestOdoo.text = "🔗 فحص الاتصال وتحديث تسجيل الجهاز"
+                    Toast.makeText(this, "❌ خطأ في الاتصال: ${e.message}", Toast.LENGTH_LONG).show()
+                }
             }
         }.start()
     }
 
     private fun syncCatalogFromOdoo() {
-        val url = etServerUrl.text.toString().trim()
-        val dbName = etDatabase.text.toString().trim()
-        val user = etUsername.text.toString().trim()
-        val pass = etPassword.text.toString().trim()
-
-        if (url.isBlank() || dbName.isBlank() || user.isBlank() || pass.isBlank()) {
-            Toast.makeText(this, "يرجى تعبئة كافة حقول Odoo أولاً", Toast.LENGTH_SHORT).show()
-            return
-        }
-
         progressCatalogSync.visibility = View.VISIBLE
         btnDownloadCatalog.isEnabled = false
         txtCatalogStatus.text = "جاري الاتصال بـ Odoo وتحميل الأصناف والعبوات..."
 
         Thread {
             try {
-                val client = OdooClient(url, dbName, user, pass)
+                val client = AppSecurity.getEffectiveOdooClient(this)
                 if (!client.authenticate()) {
                     throw IllegalStateException(client.lastError ?: "فشل الاتصال بـ Odoo")
                 }
@@ -284,11 +254,6 @@ class SettingsActivity : AppCompatActivity() {
         val devName = etDeviceName.text.toString().trim()
         val defZone = etDefaultZone.text.toString().trim()
 
-        val url = etServerUrl.text.toString().trim()
-        val dbName = etDatabase.text.toString().trim()
-        val user = etUsername.text.toString().trim()
-        val pass = etPassword.text.toString().trim()
-
         val email = etTargetEmail.text.toString().trim()
         val smtpEnabled = chkEnableSmtp.isChecked
         val smtpHost = etSmtpHost.text.toString().trim()
@@ -299,8 +264,6 @@ class SettingsActivity : AppCompatActivity() {
 
         settingsManager.setDeviceName(devName.ifBlank { "الهاندهيل 1" })
         settingsManager.setDefaultZone(defZone.ifBlank { "الرف العام" })
-
-        settingsManager.saveOdooCredentials(url, dbName, user, pass)
 
         settingsManager.setTargetEmail(email)
         settingsManager.setSmtpEnabled(smtpEnabled)
@@ -313,7 +276,7 @@ class SettingsActivity : AppCompatActivity() {
         // Sync device update with Odoo in background
         AppSecurity.registerDeviceNow(this, devName) { _, _ -> }
 
-        Toast.makeText(this, "✅ تم حفظ كافة الإعدادات ومزامنة الجهاز!", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "✅ تم حفظ الإعدادات بنجاح!", Toast.LENGTH_SHORT).show()
         finish()
     }
 }

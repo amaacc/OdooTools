@@ -10,7 +10,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:paddingBottom="28dp">
+        android:paddingBottom="32dp">
 
         <!-- Top Bar -->
         <LinearLayout
@@ -39,7 +39,7 @@
                 android:layout_weight="1"
                 android:text="@string/settings_title"
                 android:textColor="@color/text_primary"
-                android:textSize="16sp"
+                android:textSize="17sp"
                 android:textStyle="bold" />
         </LinearLayout>
 
@@ -72,7 +72,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:text="اختر المظهر المفضل للاستخدام الليلي أو النهاري:"
+                    android:text="اختر المظهر المناسب لبيئة العمل (ليلي للمستودع أو نهاري للصالات):"
                     android:textColor="@color/text_secondary"
                     android:textSize="12sp" />
 
@@ -80,7 +80,7 @@
                     android:id="@+id/rgThemeMode"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
+                    android:layout_marginTop="10dp"
                     android:orientation="horizontal">
 
                     <RadioButton
@@ -125,7 +125,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="📱 تعريف الجهاز والمنطقة الحالية"
+                    android:text="📱 تعريف الجهاز وموقع الجرد"
                     android:textColor="@color/text_cyan"
                     android:textSize="14sp"
                     android:textStyle="bold" />
@@ -176,16 +176,16 @@
                     android:id="@+id/btnOpenActivation"
                     style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                     android:layout_width="match_parent"
-                    android:layout_height="44dp"
+                    android:layout_height="48dp"
                     android:layout_marginTop="12dp"
-                    android:text="🔑 ترخيص ومزامنة الجهاز مع Odoo"
+                    android:text="🔑 ترخيص وتفعيل الجهاز في Odoo"
                     android:textColor="@color/accent_gold"
                     android:textSize="13sp"
                     android:textStyle="bold" />
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
-        <!-- Section 2: Odoo Server Connection -->
+        <!-- Section 2: Secure Odoo Cloud Connection -->
         <androidx.cardview.widget.CardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -205,138 +205,63 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="🌐 الاتصال بنظام Odoo وتحديث الأجهزة"
+                    android:text="🌐 الربط السحابي ومزامنة البيانات (Odoo)"
                     android:textColor="@color/primary_light"
                     android:textSize="14sp"
                     android:textStyle="bold" />
 
+                <!-- Security Encrypted Badge -->
                 <TextView
-                    android:layout_width="wrap_content"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="القيم معبأة تلقائياً ببيانات الشركة، ويمكنك تعديلها إذا رغبت:"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/bg_count_box"
+                    android:paddingHorizontal="12dp"
+                    android:paddingVertical="8dp"
+                    android:text="🔒 الاتصال بسيرفر Odoo مشفر ومحمي تلقائياً (AES-256)"
+                    android:textColor="@color/text_success"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:lineSpacingExtra="2dp"
+                    android:text="يتم الاتصال تلقائياً بسحابة Odoo المعتمدة لشركة العسلي لتسجيل الجهاز ومزامنة الأسعار وقواعد البيانات."
                     android:textColor="@color/text_secondary"
                     android:textSize="11sp" />
 
-                <com.google.android.material.textfield.TextInputLayout
-                    style="@style/Widget.FastInventory.TextInputLayout"
+                <!-- Button 1: Test Connection & Register Device (Full Width) -->
+                <Button
+                    android:id="@+id/btnTestOdoo"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="14dp"
+                    android:backgroundTint="@color/accent"
+                    android:text="🔗 فحص الاتصال وتحديث تسجيل الجهاز"
+                    android:textColor="@color/white"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <!-- Button 2: Download Catalog (Full Width) -->
+                <Button
+                    android:id="@+id/btnDownloadCatalog"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
                     android:layout_marginTop="10dp"
-                    android:hint="@string/server_url"
-                    app:boxBackgroundColor="@color/bg_input"
-                    app:boxStrokeColor="@color/input_stroke_selector"
-                    app:hintTextColor="@color/primary">
-
-                    <com.google.android.material.textfield.TextInputEditText
-                        android:id="@+id/etServerUrl"
-                        style="@style/Widget.FastInventory.TextInputEditText"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:background="@null"
-                        android:inputType="textUri"
-                        android:textColor="@color/text_primary"
-                        android:textColorHint="@color/text_secondary" />
-                </com.google.android.material.textfield.TextInputLayout>
-
-                <com.google.android.material.textfield.TextInputLayout
-                    style="@style/Widget.FastInventory.TextInputLayout"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:hint="@string/database"
-                    app:boxBackgroundColor="@color/bg_input"
-                    app:boxStrokeColor="@color/input_stroke_selector"
-                    app:hintTextColor="@color/primary">
-
-                    <com.google.android.material.textfield.TextInputEditText
-                        android:id="@+id/etDatabase"
-                        style="@style/Widget.FastInventory.TextInputEditText"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:background="@null"
-                        android:inputType="text"
-                        android:textColor="@color/text_primary"
-                        android:textColorHint="@color/text_secondary" />
-                </com.google.android.material.textfield.TextInputLayout>
-
-                <com.google.android.material.textfield.TextInputLayout
-                    style="@style/Widget.FastInventory.TextInputLayout"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:hint="@string/username"
-                    app:boxBackgroundColor="@color/bg_input"
-                    app:boxStrokeColor="@color/input_stroke_selector"
-                    app:hintTextColor="@color/primary">
-
-                    <com.google.android.material.textfield.TextInputEditText
-                        android:id="@+id/etUsername"
-                        style="@style/Widget.FastInventory.TextInputEditText"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:background="@null"
-                        android:inputType="text"
-                        android:textColor="@color/text_primary"
-                        android:textColorHint="@color/text_secondary" />
-                </com.google.android.material.textfield.TextInputLayout>
-
-                <com.google.android.material.textfield.TextInputLayout
-                    style="@style/Widget.FastInventory.TextInputLayout"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:hint="@string/password"
-                    app:boxBackgroundColor="@color/bg_input"
-                    app:boxStrokeColor="@color/input_stroke_selector"
-                    app:hintTextColor="@color/primary">
-
-                    <com.google.android.material.textfield.TextInputEditText
-                        android:id="@+id/etPassword"
-                        style="@style/Widget.FastInventory.TextInputEditText"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:background="@null"
-                        android:inputType="textPassword"
-                        android:textColor="@color/text_primary"
-                        android:textColorHint="@color/text_secondary" />
-                </com.google.android.material.textfield.TextInputLayout>
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:orientation="horizontal">
-
-                    <Button
-                        android:id="@+id/btnTestOdoo"
-                        android:layout_width="0dp"
-                        android:layout_height="46dp"
-                        android:layout_marginEnd="6dp"
-                        android:layout_weight="1"
-                        android:backgroundTint="@color/accent"
-                        android:text="🔗 اختبار وتسجيل الجهاز"
-                        android:textColor="@color/white"
-                        android:textSize="12sp"
-                        android:textStyle="bold" />
-
-                    <Button
-                        android:id="@+id/btnDownloadCatalog"
-                        android:layout_width="0dp"
-                        android:layout_height="46dp"
-                        android:layout_weight="1.2"
-                        android:backgroundTint="@color/primary"
-                        android:text="@string/download_catalog"
-                        android:textColor="@color/white"
-                        android:textSize="12sp"
-                        android:textStyle="bold" />
-                </LinearLayout>
+                    android:backgroundTint="@color/primary"
+                    android:text="📥 مزامنة دليل الأصناف والعبوات محلياً"
+                    android:textColor="@color/white"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
 
                 <TextView
                     android:id="@+id/txtCatalogStatus"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
+                    android:gravity="center"
                     android:text="@string/catalog_status_never"
                     android:textColor="@color/text_secondary"
                     android:textSize="12sp" />
@@ -371,7 +296,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="✉️ إعدادات الإرسال والبريد الإلكتروني"
+                    android:text="✉️ إعدادات استلام تقارير الجرد"
                     android:textColor="@color/text_cyan"
                     android:textSize="14sp"
                     android:textStyle="bold" />
@@ -514,7 +439,7 @@
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
-        <!-- Save Button -->
+        <!-- Save Button (Full Width, Height 50dp, perfectly visible) -->
         <Button
             android:id="@+id/btnSaveSettings"
             android:layout_width="match_parent"
