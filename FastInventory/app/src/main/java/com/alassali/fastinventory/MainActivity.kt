@@ -72,10 +72,11 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            val barcode = result.data?.getStringExtra(CameraScanActivity.EXTRA_SCANNED_BARCODE)
-            if (!barcode.isNullOrBlank()) {
-                handleBarcodeScanned(barcode)
+            val lastBarcode = result.data?.getStringExtra(CameraScanActivity.EXTRA_SCANNED_BARCODE)
+            if (!lastBarcode.isNullOrBlank()) {
+                displayProductInfo(lastBarcode)
             }
+            updateSessionUi()
         }
     }
 
@@ -111,7 +112,11 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         try {
-            registerReceiver(scannerHelper.intentReceiver, scannerHelper.getIntentFilter())
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(scannerHelper.intentReceiver, scannerHelper.getIntentFilter(), Context.RECEIVER_EXPORTED)
+            } else {
+                registerReceiver(scannerHelper.intentReceiver, scannerHelper.getIntentFilter())
+            }
         } catch (e: Exception) {
             // Ignore if already registered
         }
@@ -287,6 +292,46 @@ class MainActivity : AppCompatActivity() {
         flashScanCard(result.isPackaging, result.isUnknown)
 
         updateSessionUi()
+    }
+
+    private fun displayProductInfo(barcode: String) {
+        val cleanBarcode = barcode.trim()
+        val (product, packaging) = db.lookupBarcode(cleanBarcode)
+        val resolvedBarcode = product?.barcode?.ifBlank { cleanBarcode } ?: cleanBarcode
+        val isPackaging = packaging != null
+        val isUnknown = product == null
+        val totalInZone = db.getItemCountInZone(sessionManager.currentSession.id, resolvedBarcode, sessionManager.currentZone)
+
+        currentScannedBarcode = resolvedBarcode
+
+        viewIdlePrompt.visibility = View.GONE
+        viewScannedProduct.visibility = View.VISIBLE
+
+        txtBarcode.text = resolvedBarcode
+        txtDefaultCode.text = if (product?.defaultCode?.isNotBlank() == true && product.defaultCode != "-") "كود: ${product.defaultCode}" else ""
+        txtProductNameAr.text = product?.nameAr ?: "صنف غير معرّف (${resolvedBarcode})"
+        txtProductNameEn.text = product?.nameEn ?: ""
+
+        if (isPackaging) {
+            badgePackaging.visibility = View.VISIBLE
+            badgePackaging.text = "📦 كرتون = ${String.format(Locale.US, "%.0f", packaging?.qty ?: 1.0)} حبة (${packaging?.name ?: ""})"
+        } else {
+            badgePackaging.visibility = View.GONE
+        }
+
+        txtCountedQty.text = String.format(Locale.US, "%.0f", totalInZone)
+
+        val statusText = if (isPackaging) {
+            "✅ تم حصر كرتون | إجمالي الرف: ${String.format(Locale.US, "%.0f", totalInZone)}"
+        } else if (isUnknown) {
+            "⚠️ صنف غير معرّف | إجمالي الرف: ${String.format(Locale.US, "%.0f", totalInZone)}"
+        } else {
+            "✅ مسجل في الجرد | إجمالي الرف: ${String.format(Locale.US, "%.0f", totalInZone)}"
+        }
+        txtLastAddedStatus.text = statusText
+        txtLastAddedStatus.setTextColor(
+            if (isUnknown) getColor(R.color.text_warning) else getColor(R.color.text_success)
+        )
     }
 
     private fun updateProductCountDisplay(newTotal: Double, delta: Double) {
@@ -479,7 +524,12 @@ class MainActivity : AppCompatActivity() {
                     settingsManager.getUsername(),
                     settingsManager.getPassword()
                 )
-                AppUpdateManager.checkForUpdate(this, client, "1.00")
+                val currentVersion = try {
+                    packageManager.getPackageInfo(packageName, 0).versionName ?: "1.04"
+                } catch (e: Exception) {
+                    "1.04"
+                }
+                AppUpdateManager.checkForUpdate(this, client, currentVersion)
             } catch (e: Exception) {
                 // Ignore update failure
             }
