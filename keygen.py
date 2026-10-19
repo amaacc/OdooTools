@@ -251,7 +251,9 @@ class KeygenApp(ctk.CTk):
                 if st != "blocked":
                     continue
             elif self.app_filter != "all":
-                if self.app_filter.lower() not in app_n:
+                filter_key = self.app_filter.lower()
+                matches = (filter_key in app_n) or (self.app_filter == "FastInventory" and "inventory" in app_n)
+                if not matches:
                     continue
 
             # Text Search Filter

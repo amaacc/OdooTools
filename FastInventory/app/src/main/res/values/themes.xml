@@ -5,10 +5,40 @@
         <item name="colorPrimary">@color/primary</item>
         <item name="colorPrimaryDark">@color/primary_dark</item>
         <item name="colorAccent">@color/accent</item>
+        <item name="colorSurface">@color/bg_card</item>
+        <item name="android:colorBackground">@color/bg_main</item>
         <item name="android:windowBackground">@color/bg_main</item>
         <item name="android:textColorPrimary">@color/text_primary</item>
         <item name="android:textColorSecondary">@color/text_secondary</item>
         <item name="android:forceDarkAllowed">false</item>
+
+        <!-- Default input styling -->
+        <item name="textInputStyle">@style/Widget.FastInventory.TextInputLayout</item>
+        <item name="editTextStyle">@style/Widget.FastInventory.TextInputEditText</item>
+    </style>
+
+    <!-- Professional Outlined Box TextInputLayout Style -->
+    <style name="Widget.FastInventory.TextInputLayout" parent="Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+        <item name="boxBackgroundMode">outline</item>
+        <item name="boxBackgroundColor">@color/bg_input</item>
+        <item name="boxStrokeColor">@color/input_stroke_selector</item>
+        <item name="boxStrokeWidth">1.5dp</item>
+        <item name="boxStrokeWidthFocused">2dp</item>
+        <item name="boxCornerRadiusTopStart">10dp</item>
+        <item name="boxCornerRadiusTopEnd">10dp</item>
+        <item name="boxCornerRadiusBottomStart">10dp</item>
+        <item name="boxCornerRadiusBottomEnd">10dp</item>
+        <item name="hintTextColor">@color/primary_light</item>
+        <item name="android:textColorHint">@color/text_secondary</item>
+    </style>
+
+    <!-- Professional TextInputEditText Style -->
+    <style name="Widget.FastInventory.TextInputEditText" parent="Widget.MaterialComponents.TextInputEditText.OutlinedBox">
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textColorHint">@color/text_secondary</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:paddingTop">12dp</item>
+        <item name="android:paddingBottom">12dp</item>
     </style>
 
     <!-- Fullscreen Camera Scan Theme -->

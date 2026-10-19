@@ -2,6 +2,7 @@ package com.alassali.fastinventory
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKeys
 
@@ -21,14 +22,55 @@ class SettingsManager(context: Context) {
         context.getSharedPreferences("fast_inventory_plain_prefs", Context.MODE_PRIVATE)
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Theme Management (Dark & Light)
+    // ─────────────────────────────────────────────────────────────────────────
+    fun getThemeMode(): String = prefs.getString("theme_mode", "dark") ?: "dark"
+
+    fun setThemeMode(mode: String) {
+        val cleanMode = if (mode.equals("light", ignoreCase = true)) "light" else "dark"
+        prefs.edit().putString("theme_mode", cleanMode).apply()
+        applyTheme()
+    }
+
+    fun applyTheme() {
+        if (getThemeMode() == "light") {
+            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
+        } else {
+            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Odoo Credentials
+    // ─────────────────────────────────────────────────────────────────────────
     fun isConfigured(): Boolean {
         return getServerUrl().isNotBlank() && getDatabase().isNotBlank() && getUsername().isNotBlank() && getPassword().isNotBlank()
     }
 
-    fun getServerUrl(): String = prefs.getString("server_url", "http://192.168.1.100:8069") ?: ""
-    fun getDatabase(): String = prefs.getString("database", "alassali_db") ?: ""
-    fun getUsername(): String = prefs.getString("username", "") ?: ""
-    fun getPassword(): String = prefs.getString("password", "") ?: ""
+    fun getServerUrl(): String {
+        val s = prefs.getString("server_url", "") ?: ""
+        if (s.isNotBlank()) return s
+        return try { AppSecurity.getOdooConfig().url } catch (e: Exception) { "" }
+    }
+
+    fun getDatabase(): String {
+        val s = prefs.getString("database", "") ?: ""
+        if (s.isNotBlank()) return s
+        return try { AppSecurity.getOdooConfig().db } catch (e: Exception) { "" }
+    }
+
+    fun getUsername(): String {
+        val s = prefs.getString("username", "") ?: ""
+        if (s.isNotBlank()) return s
+        return try { AppSecurity.getOdooConfig().user } catch (e: Exception) { "" }
+    }
+
+    fun getPassword(): String {
+        val s = prefs.getString("password", "") ?: ""
+        if (s.isNotBlank()) return s
+        return try { AppSecurity.getOdooConfig().password } catch (e: Exception) { "" }
+    }
 
     fun saveOdooCredentials(url: String, db: String, user: String, pass: String) {
         prefs.edit().apply {
@@ -39,6 +81,9 @@ class SettingsManager(context: Context) {
         }.apply()
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Device & Session
+    // ─────────────────────────────────────────────────────────────────────────
     fun getDeviceName(): String = prefs.getString("device_name", "الهاندهيل 1") ?: "الهاندهيل 1"
     fun setDeviceName(name: String) = prefs.edit().putString("device_name", name.trim()).apply()
 

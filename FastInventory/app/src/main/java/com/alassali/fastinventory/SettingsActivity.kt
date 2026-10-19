@@ -1,6 +1,7 @@
 package com.alassali.fastinventory
 
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
@@ -8,6 +9,8 @@ import android.widget.CheckBox
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.ProgressBar
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -22,6 +25,10 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var db: InventoryDatabase
 
     private lateinit var btnBack: ImageButton
+    private lateinit var rgThemeMode: RadioGroup
+    private lateinit var rbThemeDark: RadioButton
+    private lateinit var rbThemeLight: RadioButton
+
     private lateinit var etDeviceName: TextInputEditText
     private lateinit var etDefaultZone: TextInputEditText
     private lateinit var btnOpenActivation: Button
@@ -48,18 +55,23 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_settings)
-
         settingsManager = SettingsManager(this)
         db = InventoryDatabase(this)
 
-        initViews()
+        setContentView(R.layout.activity_settings)
+
+        bindViews()
         loadSavedValues()
         setupListeners()
     }
 
-    private fun initViews() {
+    private fun bindViews() {
         btnBack = findViewById(R.id.btnSettingsBack)
+
+        rgThemeMode = findViewById(R.id.rgThemeMode)
+        rbThemeDark = findViewById(R.id.rbThemeDark)
+        rbThemeLight = findViewById(R.id.rbThemeLight)
+
         etDeviceName = findViewById(R.id.etDeviceName)
         etDefaultZone = findViewById(R.id.etDefaultZone)
         btnOpenActivation = findViewById(R.id.btnOpenActivation)
@@ -86,14 +98,24 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun loadSavedValues() {
+        // Theme
+        if (settingsManager.getThemeMode() == "light") {
+            rbThemeLight.isChecked = true
+        } else {
+            rbThemeDark.isChecked = true
+        }
+
+        // Device
         etDeviceName.setText(settingsManager.getDeviceName())
         etDefaultZone.setText(settingsManager.getDefaultZone())
 
+        // Odoo (Uses company defaults if not entered)
         etServerUrl.setText(settingsManager.getServerUrl())
         etDatabase.setText(settingsManager.getDatabase())
         etUsername.setText(settingsManager.getUsername())
         etPassword.setText(settingsManager.getPassword())
 
+        // Email & SMTP
         etTargetEmail.setText(settingsManager.getTargetEmail())
 
         val isSmtp = settingsManager.isSmtpEnabled()
@@ -125,6 +147,13 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun setupListeners() {
         btnBack.setOnClickListener { finish() }
+
+        rgThemeMode.setOnCheckedChangeListener { _, checkedId ->
+            val targetMode = if (checkedId == R.id.rbThemeLight) "light" else "dark"
+            if (targetMode != settingsManager.getThemeMode()) {
+                settingsManager.setThemeMode(targetMode)
+            }
+        }
 
         btnOpenActivation.setOnClickListener {
             startActivity(Intent(this, ActivationActivity::class.java))
@@ -159,15 +188,32 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         btnTestOdoo.isEnabled = false
-        btnTestOdoo.text = "جاري الفحص..."
+        btnTestOdoo.text = "جاري الفحص والتسجيل..."
 
         Thread {
             val client = OdooClient(url, dbName, user, pass)
             val (ok, msg) = client.testConnection()
+            var regOk = false
+            if (ok) {
+                try {
+                    val deviceId = LicenseManager.getDeviceId(this)
+                    val devName = etDeviceName.text.toString().trim().ifBlank { "الهاندهيل 1" }
+                    val model = "${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})"
+                    val status = client.registerOrUpdateDevice(deviceId, devName, model, "FastInventory", "1.02")
+                    regOk = (status != "unknown")
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+
             runOnUiThread {
                 btnTestOdoo.isEnabled = true
-                btnTestOdoo.text = getString(R.string.test_connection)
-                Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                btnTestOdoo.text = "🔗 اختبار وتسجيل الجهاز"
+                val feedback = if (ok) {
+                    if (regOk) "✅ تم الاتصال بنجاح وتحديث تسجيل الجهاز في Odoo!"
+                    else "✅ الاتصال ناجح، ولكن تعذر تحديث بيانات الجهاز: $msg"
+                } else msg
+                Toast.makeText(this, feedback, Toast.LENGTH_LONG).show()
             }
         }.start()
     }
@@ -264,7 +310,10 @@ class SettingsActivity : AppCompatActivity() {
         settingsManager.setSmtpPassword(smtpPass)
         settingsManager.setSmtpSsl(smtpSsl)
 
-        Toast.makeText(this, "✅ تم حفظ كافة الإعدادات بنجاح!", Toast.LENGTH_SHORT).show()
+        // Sync device update with Odoo in background
+        AppSecurity.registerDeviceNow(this, devName) { _, _ -> }
+
+        Toast.makeText(this, "✅ تم حفظ كافة الإعدادات ومزامنة الجهاز!", Toast.LENGTH_SHORT).show()
         finish()
     }
 }

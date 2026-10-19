@@ -42,7 +42,7 @@
         <androidx.cardview.widget.CardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
+            android:layout_marginTop="16dp"
             app:cardBackgroundColor="@color/bg_card"
             app:cardCornerRadius="16dp"
             app:cardElevation="4dp">
@@ -56,7 +56,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="🔐 حماية وترخيص أجهزة الجرد الميداني"
+                    android:text="🔐 ترخيص وحماية أجهزة FastInventory"
                     android:textColor="@color/accent_gold"
                     android:textSize="15sp"
                     android:textStyle="bold" />
@@ -65,8 +65,8 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
-                    android:lineSpacingExtra="2dp"
-                    android:text="قم بنسخ معرّف الجهاز (Device ID) أدناه وتزويد إدارة النظام (عبدالله الخطيب) به لتوليد مفتاح التفعيل الخاص بهذا الجهاز."
+                    android:lineSpacingExtra="3dp"
+                    android:text="قم بنسخ معرّف الجهاز (Device ID) أدناه واستخدم برنامج Keygen_Admin لتوليد مفتاح التفعيل، أو تزويد الإدارة به. عند التفعيل، يتم تسجيل ومزامنة الجهاز تلقائياً في سيرفر Odoo."
                     android:textColor="@color/text_secondary"
                     android:textSize="12sp" />
 
@@ -87,7 +87,7 @@
                     android:background="@drawable/bg_count_box"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
-                    android:padding="8dp">
+                    android:padding="10dp">
 
                     <TextView
                         android:id="@+id/txtDeviceId"
@@ -124,18 +124,26 @@
                     android:textStyle="bold" />
 
                 <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.FastInventory.TextInputLayout"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
-                    android:hint="XXXX-XXXX-XXXX-XXXX">
+                    android:hint="XXXX-XXXX-XXXX-XXXX"
+                    app:boxBackgroundColor="@color/bg_input"
+                    app:boxStrokeColor="@color/input_stroke_selector"
+                    app:hintTextColor="@color/primary">
 
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/etLicenseKey"
+                        style="@style/Widget.FastInventory.TextInputEditText"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
+                        android:background="@null"
                         android:fontFamily="monospace"
                         android:gravity="center"
                         android:inputType="textCapCharacters"
+                        android:textColor="@color/text_primary"
+                        android:textColorHint="@color/text_secondary"
                         android:textSize="15sp" />
                 </com.google.android.material.textfield.TextInputLayout>
 
@@ -144,24 +152,45 @@
                     android:id="@+id/txtActivationStatus"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
+                    android:layout_marginTop="12dp"
                     android:gravity="center"
                     android:text="حالة الجهاز: بانتظار التفعيل"
                     android:textColor="@color/text_warning"
                     android:textSize="13sp"
                     android:textStyle="bold" />
 
-                <!-- Action Button -->
+                <!-- Action Button: Activate -->
                 <Button
                     android:id="@+id/btnSubmitActivation"
                     android:layout_width="match_parent"
                     android:layout_height="48dp"
-                    android:layout_marginTop="16dp"
+                    android:layout_marginTop="14dp"
                     android:backgroundTint="@color/primary"
                     android:text="@string/btn_activate"
                     android:textColor="@color/white"
                     android:textSize="14sp"
                     android:textStyle="bold" />
+
+                <!-- Action Button: Sync with Odoo -->
+                <Button
+                    android:id="@+id/btnSyncOdoo"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="10dp"
+                    android:text="🔄 مزامنة بيانات الجهاز مع سيرفر Odoo الآن"
+                    android:textColor="@color/text_cyan"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <ProgressBar
+                    android:id="@+id/progressSync"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_horizontal"
+                    android:layout_marginTop="8dp"
+                    android:visibility="gone" />
+
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 

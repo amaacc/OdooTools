@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand / Accent Colors -->
+    <color name="primary">#059669</color>
+    <color name="primary_dark">#064E3B</color>
+    <color name="primary_light">#10B981</color>
+    <color name="accent">#38BDF8</color>
+    <color name="accent_gold">#F59E0B</color>
+
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
+    <color name="transparent">#00000000</color>
+
+    <!-- Dark Theme Backgrounds -->
+    <color name="bg_main">#0B1120</color>
+    <color name="bg_card">#1E293B</color>
+    <color name="bg_card_secondary">#0F172A</color>
+    <color name="bg_card_highlight">#283548</color>
+    <color name="bg_input">#0F172A</color>
+    <color name="border_subtle">#334155</color>
+    <color name="border_gray">#475569</color>
+    <color name="input_stroke">#475569</color>
+    <color name="input_stroke_focused">#10B981</color>
+    <color name="stock_green_bg">#065F46</color>
+
+    <!-- Text Colors (Dark Theme: High contrast light/crisp text) -->
+    <color name="text_primary">#F8FAFC</color>
+    <color name="text_secondary">#94A3B8</color>
+    <color name="text_muted">#64748B</color>
+    <color name="text_success">#86EFAC</color>
+    <color name="text_danger">#FCA5A5</color>
+    <color name="text_warning">#FDE047</color>
+    <color name="text_cyan">#38BDF8</color>
+
+    <!-- Scan Feedback Status Colors -->
+    <color name="scan_ready_bg">#1E293B</color>
+    <color name="scan_success_flash">#065F46</color>
+    <color name="scan_packaging_flash">#4C1D95</color>
+    <color name="scan_warning_flash">#78350F</color>
+    <color name="scan_danger_flash">#7F1D1D</color>
+
+    <!-- Badges -->
+    <color name="badge_packaging_bg">#581C87</color>
+    <color name="badge_packaging_text">#E9D5FF</color>
+    <color name="badge_zone_bg">#0C4A6E</color>
+    <color name="badge_zone_text">#BAE6FD</color>
+    <color name="badge_device_bg">#134E4A</color>
+    <color name="badge_device_text">#99F6E4</color>
+</resources>

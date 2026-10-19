@@ -10,7 +10,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:paddingBottom="24dp">
+        android:paddingBottom="28dp">
 
         <!-- Top Bar -->
         <LinearLayout
@@ -43,6 +43,68 @@
                 android:textStyle="bold" />
         </LinearLayout>
 
+        <!-- Theme Selection Card -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="14dp"
+            android:layout_marginTop="12dp"
+            android:layout_marginEnd="14dp"
+            app:cardBackgroundColor="@color/bg_card"
+            app:cardCornerRadius="12dp"
+            app:cardElevation="3dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🎨 مظهر التطبيق (الثيم)"
+                    android:textColor="@color/accent_gold"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="اختر المظهر المفضل للاستخدام الليلي أو النهاري:"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+
+                <RadioGroup
+                    android:id="@+id/rgThemeMode"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:orientation="horizontal">
+
+                    <RadioButton
+                        android:id="@+id/rbThemeDark"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:checked="true"
+                        android:text="🌙 الوضع الداكن (Dark)"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+
+                    <RadioButton
+                        android:id="@+id/rbThemeLight"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="☀️ الوضع الفاتح (Light)"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+                </RadioGroup>
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
         <!-- Section 1: Device Identification -->
         <androidx.cardview.widget.CardView
             android:layout_width="match_parent"
@@ -69,40 +131,56 @@
                     android:textStyle="bold" />
 
                 <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.FastInventory.TextInputLayout"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:hint="@string/device_name_label">
+                    android:layout_marginTop="10dp"
+                    android:hint="@string/device_name_label"
+                    app:boxBackgroundColor="@color/bg_input"
+                    app:boxStrokeColor="@color/input_stroke_selector"
+                    app:hintTextColor="@color/primary">
 
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/etDeviceName"
+                        style="@style/Widget.FastInventory.TextInputEditText"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:inputType="text" />
+                        android:background="@null"
+                        android:inputType="text"
+                        android:textColor="@color/text_primary"
+                        android:textColorHint="@color/text_secondary" />
                 </com.google.android.material.textfield.TextInputLayout>
 
                 <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.FastInventory.TextInputLayout"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:hint="المنطقة أو الرف الافتراضي للجرد">
+                    android:layout_marginTop="10dp"
+                    android:hint="المنطقة أو الرف الافتراضي للجرد"
+                    app:boxBackgroundColor="@color/bg_input"
+                    app:boxStrokeColor="@color/input_stroke_selector"
+                    app:hintTextColor="@color/primary">
 
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/etDefaultZone"
+                        style="@style/Widget.FastInventory.TextInputEditText"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:inputType="text" />
+                        android:background="@null"
+                        android:inputType="text"
+                        android:textColor="@color/text_primary"
+                        android:textColorHint="@color/text_secondary" />
                 </com.google.android.material.textfield.TextInputLayout>
 
                 <Button
                     android:id="@+id/btnOpenActivation"
                     style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                     android:layout_width="match_parent"
-                    android:layout_height="42dp"
-                    android:layout_marginTop="10dp"
-                    android:text="🔑 ترخيص وتفعيل الجهاز"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="12dp"
+                    android:text="🔑 ترخيص ومزامنة الجهاز مع Odoo"
                     android:textColor="@color/accent_gold"
-                    android:textSize="12sp"
+                    android:textSize="13sp"
                     android:textStyle="bold" />
             </LinearLayout>
         </androidx.cardview.widget.CardView>
@@ -127,77 +205,117 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="🌐 الاتصال بنظام Odoo"
+                    android:text="🌐 الاتصال بنظام Odoo وتحديث الأجهزة"
                     android:textColor="@color/primary_light"
                     android:textSize="14sp"
                     android:textStyle="bold" />
 
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="القيم معبأة تلقائياً ببيانات الشركة، ويمكنك تعديلها إذا رغبت:"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="11sp" />
+
                 <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.FastInventory.TextInputLayout"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:hint="@string/server_url">
+                    android:layout_marginTop="10dp"
+                    android:hint="@string/server_url"
+                    app:boxBackgroundColor="@color/bg_input"
+                    app:boxStrokeColor="@color/input_stroke_selector"
+                    app:hintTextColor="@color/primary">
 
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/etServerUrl"
+                        style="@style/Widget.FastInventory.TextInputEditText"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:inputType="textUri" />
+                        android:background="@null"
+                        android:inputType="textUri"
+                        android:textColor="@color/text_primary"
+                        android:textColorHint="@color/text_secondary" />
                 </com.google.android.material.textfield.TextInputLayout>
 
                 <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.FastInventory.TextInputLayout"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:hint="@string/database">
+                    android:layout_marginTop="10dp"
+                    android:hint="@string/database"
+                    app:boxBackgroundColor="@color/bg_input"
+                    app:boxStrokeColor="@color/input_stroke_selector"
+                    app:hintTextColor="@color/primary">
 
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/etDatabase"
+                        style="@style/Widget.FastInventory.TextInputEditText"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:inputType="text" />
+                        android:background="@null"
+                        android:inputType="text"
+                        android:textColor="@color/text_primary"
+                        android:textColorHint="@color/text_secondary" />
                 </com.google.android.material.textfield.TextInputLayout>
 
                 <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.FastInventory.TextInputLayout"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:hint="@string/username">
+                    android:layout_marginTop="10dp"
+                    android:hint="@string/username"
+                    app:boxBackgroundColor="@color/bg_input"
+                    app:boxStrokeColor="@color/input_stroke_selector"
+                    app:hintTextColor="@color/primary">
 
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/etUsername"
+                        style="@style/Widget.FastInventory.TextInputEditText"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:inputType="text" />
+                        android:background="@null"
+                        android:inputType="text"
+                        android:textColor="@color/text_primary"
+                        android:textColorHint="@color/text_secondary" />
                 </com.google.android.material.textfield.TextInputLayout>
 
                 <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.FastInventory.TextInputLayout"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:hint="@string/password">
+                    android:layout_marginTop="10dp"
+                    android:hint="@string/password"
+                    app:boxBackgroundColor="@color/bg_input"
+                    app:boxStrokeColor="@color/input_stroke_selector"
+                    app:hintTextColor="@color/primary">
 
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/etPassword"
+                        style="@style/Widget.FastInventory.TextInputEditText"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:inputType="textPassword" />
+                        android:background="@null"
+                        android:inputType="textPassword"
+                        android:textColor="@color/text_primary"
+                        android:textColorHint="@color/text_secondary" />
                 </com.google.android.material.textfield.TextInputLayout>
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
+                    android:layout_marginTop="12dp"
                     android:orientation="horizontal">
 
                     <Button
                         android:id="@+id/btnTestOdoo"
                         android:layout_width="0dp"
-                        android:layout_height="44dp"
+                        android:layout_height="46dp"
                         android:layout_marginEnd="6dp"
                         android:layout_weight="1"
                         android:backgroundTint="@color/accent"
-                        android:text="@string/test_connection"
+                        android:text="🔗 اختبار وتسجيل الجهاز"
                         android:textColor="@color/white"
                         android:textSize="12sp"
                         android:textStyle="bold" />
@@ -205,7 +323,7 @@
                     <Button
                         android:id="@+id/btnDownloadCatalog"
                         android:layout_width="0dp"
-                        android:layout_height="44dp"
+                        android:layout_height="46dp"
                         android:layout_weight="1.2"
                         android:backgroundTint="@color/primary"
                         android:text="@string/download_catalog"
@@ -259,16 +377,24 @@
                     android:textStyle="bold" />
 
                 <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.FastInventory.TextInputLayout"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:hint="@string/email_target">
+                    android:layout_marginTop="10dp"
+                    android:hint="@string/email_target"
+                    app:boxBackgroundColor="@color/bg_input"
+                    app:boxStrokeColor="@color/input_stroke_selector"
+                    app:hintTextColor="@color/primary">
 
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/etTargetEmail"
+                        style="@style/Widget.FastInventory.TextInputEditText"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:inputType="textEmailAddress" />
+                        android:background="@null"
+                        android:inputType="textEmailAddress"
+                        android:textColor="@color/text_primary"
+                        android:textColorHint="@color/text_secondary" />
                 </com.google.android.material.textfield.TextInputLayout>
 
                 <!-- SMTP Silent Mode Toggle -->
@@ -291,56 +417,88 @@
                     android:visibility="gone">
 
                     <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.FastInventory.TextInputLayout"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"
-                        android:hint="@string/smtp_host">
+                        android:layout_marginTop="8dp"
+                        android:hint="@string/smtp_host"
+                        app:boxBackgroundColor="@color/bg_input"
+                        app:boxStrokeColor="@color/input_stroke_selector"
+                        app:hintTextColor="@color/primary">
 
                         <com.google.android.material.textfield.TextInputEditText
                             android:id="@+id/etSmtpHost"
+                            style="@style/Widget.FastInventory.TextInputEditText"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:inputType="text" />
+                            android:background="@null"
+                            android:inputType="text"
+                            android:textColor="@color/text_primary"
+                            android:textColorHint="@color/text_secondary" />
                     </com.google.android.material.textfield.TextInputLayout>
 
                     <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.FastInventory.TextInputLayout"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"
-                        android:hint="@string/smtp_port">
+                        android:layout_marginTop="8dp"
+                        android:hint="@string/smtp_port"
+                        app:boxBackgroundColor="@color/bg_input"
+                        app:boxStrokeColor="@color/input_stroke_selector"
+                        app:hintTextColor="@color/primary">
 
                         <com.google.android.material.textfield.TextInputEditText
                             android:id="@+id/etSmtpPort"
+                            style="@style/Widget.FastInventory.TextInputEditText"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
+                            android:background="@null"
                             android:inputType="number"
-                            android:text="587" />
+                            android:text="587"
+                            android:textColor="@color/text_primary"
+                            android:textColorHint="@color/text_secondary" />
                     </com.google.android.material.textfield.TextInputLayout>
 
                     <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.FastInventory.TextInputLayout"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"
-                        android:hint="@string/smtp_user">
+                        android:layout_marginTop="8dp"
+                        android:hint="@string/smtp_user"
+                        app:boxBackgroundColor="@color/bg_input"
+                        app:boxStrokeColor="@color/input_stroke_selector"
+                        app:hintTextColor="@color/primary">
 
                         <com.google.android.material.textfield.TextInputEditText
                             android:id="@+id/etSmtpUser"
+                            style="@style/Widget.FastInventory.TextInputEditText"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:inputType="textEmailAddress" />
+                            android:background="@null"
+                            android:inputType="textEmailAddress"
+                            android:textColor="@color/text_primary"
+                            android:textColorHint="@color/text_secondary" />
                     </com.google.android.material.textfield.TextInputLayout>
 
                     <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.FastInventory.TextInputLayout"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"
-                        android:hint="@string/smtp_pass">
+                        android:layout_marginTop="8dp"
+                        android:hint="@string/smtp_pass"
+                        app:boxBackgroundColor="@color/bg_input"
+                        app:boxStrokeColor="@color/input_stroke_selector"
+                        app:hintTextColor="@color/primary">
 
                         <com.google.android.material.textfield.TextInputEditText
                             android:id="@+id/etSmtpPass"
+                            style="@style/Widget.FastInventory.TextInputEditText"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:inputType="textPassword" />
+                            android:background="@null"
+                            android:inputType="textPassword"
+                            android:textColor="@color/text_primary"
+                            android:textColorHint="@color/text_secondary" />
                     </com.google.android.material.textfield.TextInputLayout>
 
                     <CheckBox

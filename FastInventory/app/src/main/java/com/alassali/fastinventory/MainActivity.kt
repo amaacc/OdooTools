@@ -116,6 +116,11 @@ class MainActivity : AppCompatActivity() {
             // Ignore if already registered
         }
         updateSessionUi()
+
+        // Heartbeat & status sync with Odoo
+        if (LicenseManager.isActivated(this)) {
+            AppSecurity.verifyDeviceStatusAsync(this)
+        }
     }
 
     override fun onPause() {
@@ -298,15 +303,23 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        val container = android.widget.FrameLayout(this).apply {
+            setPadding(48, 20, 48, 10)
+        }
         val input = EditText(this).apply {
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
             hint = "أدخل الكمية المحصورة"
+            setTextColor(getColor(R.color.text_primary))
+            setHintTextColor(getColor(R.color.text_secondary))
+            setBackgroundResource(R.drawable.bg_zone_pill)
+            setPadding(28, 20, 28, 20)
         }
+        container.addView(input)
 
         AlertDialog.Builder(this)
             .setTitle("✏️ إدخال كمية الصنف")
             .setMessage("أدخل الكمية الإجمالية في هذا الرف للباركود:\n$bc")
-            .setView(input)
+            .setView(container)
             .setPositiveButton("تثبيت") { _, _ ->
                 val qty = input.text.toString().toDoubleOrNull()
                 if (qty != null && qty >= 0) {
@@ -319,16 +332,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showChangeZoneDialog() {
+        val container = android.widget.FrameLayout(this).apply {
+            setPadding(48, 20, 48, 10)
+        }
         val input = EditText(this).apply {
             setText(sessionManager.currentZone)
             setSelection(text.length)
             hint = "مثال: رف A-12 أو صالة العرض"
+            setTextColor(getColor(R.color.text_primary))
+            setHintTextColor(getColor(R.color.text_secondary))
+            setBackgroundResource(R.drawable.bg_zone_pill)
+            setPadding(28, 20, 28, 20)
         }
+        container.addView(input)
 
         AlertDialog.Builder(this)
             .setTitle("🏷️ تغيير المنطقة أو الرف الحالي")
             .setMessage("سيتم تسجيل كافة الباركودات القادمة تحت اسم هذه المنطقة:")
-            .setView(input)
+            .setView(container)
             .setPositiveButton("تغيير") { _, _ ->
                 val newZone = input.text.toString().trim()
                 if (newZone.isNotBlank()) {
