@@ -67,6 +67,16 @@
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />
 
+        <activity
+            android:name=".SessionsActivity"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".ShelfAuditActivity"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="stateHidden" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="com.alassali.fastinventory.fileprovider"

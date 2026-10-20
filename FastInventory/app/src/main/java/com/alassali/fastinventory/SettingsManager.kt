@@ -65,6 +65,26 @@ class SettingsManager(context: Context) {
     fun getPassword(): String = AppSecurity.getOdooConfig().password
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Target Showroom / Warehouse Selection
+    // ─────────────────────────────────────────────────────────────────────────
+    fun getSelectedWarehouseId(): Int = prefs.getInt("selected_warehouse_id", 0)
+    fun getSelectedWarehouseCode(): String = prefs.getString("selected_warehouse_code", "") ?: ""
+    fun getSelectedWarehouseName(): String = prefs.getString("selected_warehouse_name", "المخزون العام (الشركة بالكامل)") ?: "المخزون العام (الشركة بالكامل)"
+    fun getSelectedWarehouseLotStockId(): Int = prefs.getInt("selected_warehouse_lot_stock_id", 0)
+
+    fun setSelectedWarehouse(id: Int, code: String, name: String, lotStockId: Int) {
+        prefs.edit()
+            .putInt("selected_warehouse_id", id)
+            .putString("selected_warehouse_code", code.trim())
+            .putString("selected_warehouse_name", name.trim())
+            .putInt("selected_warehouse_lot_stock_id", lotStockId)
+            .apply()
+    }
+
+    fun getCachedWarehousesJson(): String = prefs.getString("cached_warehouses_json", "[]") ?: "[]"
+    fun setCachedWarehousesJson(json: String) = prefs.edit().putString("cached_warehouses_json", json).apply()
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Device & Session
     // ─────────────────────────────────────────────────────────────────────────
     fun getDeviceName(): String = prefs.getString("device_name", "الهاندهيل 1") ?: "الهاندهيل 1"

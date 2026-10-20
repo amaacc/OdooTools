@@ -40,6 +40,8 @@
     <color name="scan_danger_flash">#7F1D1D</color>
 
     <!-- Badges -->
+    <color name="badge_bg">#065F46</color>
+    <color name="badge_text">#86EFAC</color>
     <color name="badge_packaging_bg">#581C87</color>
     <color name="badge_packaging_text">#E9D5FF</color>
     <color name="badge_zone_bg">#0C4A6E</color>

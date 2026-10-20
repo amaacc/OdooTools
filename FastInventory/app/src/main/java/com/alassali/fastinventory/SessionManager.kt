@@ -16,21 +16,60 @@ class SessionManager(private val context: Context) {
     var currentZone: String
         private set
 
+    var currentShelfLevel: String = ""
+
     init {
         currentZone = settings.getDefaultZone()
-        currentSession = db.getOrOpenActiveSession(settings.getActiveSessionName(), currentZone)
+        currentSession = db.getOrOpenActiveSession(
+            name = settings.getActiveSessionName(),
+            defaultZone = currentZone,
+            warehouseId = settings.getSelectedWarehouseId(),
+            warehouseCode = settings.getSelectedWarehouseCode(),
+            warehouseName = settings.getSelectedWarehouseName()
+        )
     }
 
-    fun updateZone(newZone: String) {
+    fun reloadActiveSession() {
+        currentZone = settings.getDefaultZone()
+        currentSession = db.getOrOpenActiveSession(
+            name = settings.getActiveSessionName(),
+            defaultZone = currentZone,
+            warehouseId = settings.getSelectedWarehouseId(),
+            warehouseCode = settings.getSelectedWarehouseCode(),
+            warehouseName = settings.getSelectedWarehouseName()
+        )
+    }
+
+    fun updateZone(newZone: String, level: String = "") {
         val clean = newZone.trim().ifBlank { "الرف العام" }
         currentZone = clean
+        currentShelfLevel = level.trim()
         settings.setDefaultZone(clean)
     }
 
-    fun updateSessionName(newName: String) {
-        val clean = newName.trim().ifBlank { "جلسة جرد" }
-        settings.setActiveSessionName(clean)
-        currentSession = db.getOrOpenActiveSession(clean, currentZone)
+    fun switchSession(sessionId: Long) {
+        val switched = db.switchActiveSession(sessionId)
+        if (switched != null) {
+            currentSession = switched
+            currentZone = switched.zoneName.ifBlank { "الرف العام" }
+            settings.setActiveSessionName(switched.name)
+            settings.setDefaultZone(currentZone)
+        }
+    }
+
+    fun createNewSession(
+        name: String,
+        warehouseId: Int,
+        warehouseCode: String,
+        warehouseName: String,
+        defaultZone: String
+    ): InventorySession {
+        val newSession = db.createNewSession(name, warehouseId, warehouseCode, warehouseName, defaultZone)
+        currentSession = newSession
+        currentZone = defaultZone.ifBlank { "الرف العام" }
+        settings.setActiveSessionName(newSession.name)
+        settings.setDefaultZone(currentZone)
+        return newSession
     }
 
     data class ScanResult(
@@ -44,15 +83,21 @@ class SessionManager(private val context: Context) {
         val addedQty: Double,
         val totalCountedInZone: Double,
         val totalCountedInSession: Double,
-        val isUnknown: Boolean
+        val isUnknown: Boolean,
+        val shelfSeq: Int,
+        val scanMethod: String
     )
 
     /**
-     * Processes a scanned barcode during the session.
-     * Auto-detects cartons and increments by carton quantity.
-     * Records the scan instantly in SQLite.
+     * Processes a scanned or manually entered barcode during the session.
+     * Records exact barcode string, shelf sequence order, and entry method.
      */
-    fun recordScan(barcode: String, customQty: Double? = null): ScanResult {
+    fun recordScan(
+        barcode: String,
+        customQty: Double? = null,
+        scanMethod: String = "SCAN", // SCAN, MANUAL, OVERRIDE
+        shelfLevel: String = currentShelfLevel
+    ): ScanResult {
         val cleanBarcode = barcode.trim()
         val (product, packaging) = db.lookupBarcode(cleanBarcode)
 
@@ -68,6 +113,7 @@ class SessionManager(private val context: Context) {
         val nameEn = product?.nameEn ?: ""
         val isUnknown = product == null
 
+        val nextSeq = db.getNextShelfSequence(currentSession.id, currentZone)
         val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
 
         val record = ScanRecord(
@@ -83,7 +129,10 @@ class SessionManager(private val context: Context) {
             timestamp = now,
             isPackaging = isPackaging,
             packagingQty = packagingQty,
-            packagingName = packagingName
+            packagingName = packagingName,
+            scanMethod = scanMethod,
+            shelfSeq = nextSeq,
+            shelfLevel = shelfLevel
         )
 
         db.addScan(record)
@@ -102,13 +151,15 @@ class SessionManager(private val context: Context) {
             addedQty = addedQty,
             totalCountedInZone = totalInZone,
             totalCountedInSession = totalInSession,
-            isUnknown = isUnknown
+            isUnknown = isUnknown,
+            shelfSeq = nextSeq,
+            scanMethod = scanMethod
         )
     }
 
     fun addManualDelta(barcode: String, delta: Double): Double {
         if (delta == 0.0) return db.getItemCountInZone(currentSession.id, barcode, currentZone)
-        recordScan(barcode, delta)
+        recordScan(barcode = barcode, customQty = delta, scanMethod = "OVERRIDE")
         return db.getItemCountInZone(currentSession.id, barcode, currentZone)
     }
 
@@ -118,10 +169,6 @@ class SessionManager(private val context: Context) {
 
     fun deleteItem(barcode: String) {
         db.deleteItemFromSession(currentSession.id, barcode)
-    }
-
-    fun clearActiveSession() {
-        db.clearSession(currentSession.id)
     }
 
     fun getSessionSummary(): Pair<Int, Double> {

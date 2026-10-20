@@ -182,8 +182,9 @@ class ConsolidatorActivity : AppCompatActivity() {
                 val exportRes = ReportExportEngine.exportConsolidatedReport(
                     context = this,
                     reportTitle = "الجرد المدمج (${selectedFileUris.size} ملفات)",
-                    consolidatedMap = consolidatedMap,
-                    rawRecords = allParsedRawRecords
+                    consolidatedItems = consolidatedMap.values.toList(),
+                    deviceNames = selectedFileNames,
+                    db = db
                 )
                 lastExportResult = exportRes
 

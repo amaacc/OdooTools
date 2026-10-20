@@ -194,9 +194,64 @@ class OdooClient(
     }
 
     /**
-     * Downloads all active products from Odoo in paginated batches for offline fast lookup.
+     * Fetches all active showrooms and warehouses from stock.warehouse.
      */
-    fun downloadAllProducts(onProgress: (fetchedCount: Int, totalEst: Int) -> Unit): List<ProductItem> {
+    fun fetchAllWarehouses(): List<WarehouseItem> {
+        if (uid <= 0 && !authenticate()) {
+            throw IllegalStateException(lastError ?: "تعذر الاتصال بـ Odoo")
+        }
+
+        val domain = JSONArray().apply {
+            put(JSONArray().apply { put("active"); put("="); put(true) })
+        }
+
+        val fields = JSONArray().apply {
+            put("id")
+            put("name")
+            put("code")
+            put("lot_stock_id")
+        }
+
+        val kwargs = JSONObject().apply {
+            put("fields", fields)
+            put("order", "code asc, name asc")
+        }
+
+        val args = JSONArray().apply {
+            put(db); put(uid); put(password)
+            put("stock.warehouse")
+            put("search_read")
+            put(JSONArray().apply { put(domain) })
+            put(kwargs)
+        }
+
+        val result = postJsonRpc("object", "execute_kw", args) as? JSONArray ?: return emptyList()
+        val list = mutableListOf<WarehouseItem>()
+
+        for (i in 0 until result.length()) {
+            val obj = result.getJSONObject(i)
+            val id = obj.optInt("id")
+            val name = obj.optString("name", "").trim()
+            val code = obj.optString("code", "").trim()
+            val lotArr = obj.optJSONArray("lot_stock_id")
+            val lotId = lotArr?.optInt(0)
+
+            list.add(WarehouseItem(id, name, code, lotId))
+        }
+
+        return list
+    }
+
+    /**
+     * Downloads active products from Odoo in paginated batches for offline fast lookup.
+     * If warehouseId or warehouseLotStockId is supplied, Odoo calculates stock specifically for that showroom!
+     */
+    fun downloadAllProducts(
+        warehouseId: Int = 0,
+        warehouseLotStockId: Int? = null,
+        warehouseName: String = "",
+        onProgress: (fetchedCount: Int, totalEst: Int) -> Unit
+    ): List<ProductItem> {
         if (uid <= 0 && !authenticate()) {
             throw IllegalStateException(lastError ?: "تعذر الاتصال بـ Odoo")
         }
@@ -217,6 +272,14 @@ class OdooClient(
             put("qty_available")
         }
 
+        val contextObj = JSONObject()
+        if (warehouseId > 0) {
+            contextObj.put("warehouse", warehouseId)
+        }
+        if (warehouseLotStockId != null && warehouseLotStockId > 0) {
+            contextObj.put("location", warehouseLotStockId)
+        }
+
         val batchSize = 1000
         var offset = 0
         val allProducts = mutableListOf<ProductItem>()
@@ -226,6 +289,9 @@ class OdooClient(
                 put("fields", fields)
                 put("offset", offset)
                 put("limit", batchSize)
+                if (contextObj.length() > 0) {
+                    put("context", contextObj)
+                }
             }
 
             val args = JSONArray().apply {
@@ -260,7 +326,9 @@ class OdooClient(
                         nameEn = nameEn,
                         standardPrice = cost,
                         listPrice = price,
-                        systemQty = qty
+                        systemQty = qty,
+                        warehouseId = warehouseId,
+                        warehouseName = warehouseName
                     )
                 )
             }
@@ -275,9 +343,9 @@ class OdooClient(
     }
 
     /**
-     * Downloads carton/box packaging records from product.packaging.
+     * Downloads ALL carton/box packaging records from product.packaging in paginated batches.
      */
-    fun downloadAllPackagings(): List<PackagingItem> {
+    fun downloadAllPackagings(onProgress: ((Int) -> Unit)? = null): List<PackagingItem> {
         if (uid <= 0 && !authenticate()) {
             throw IllegalStateException(lastError ?: "تعذر الاتصال بـ Odoo")
         }
@@ -294,47 +362,58 @@ class OdooClient(
             put("product_id")
         }
 
-        val kwargs = JSONObject().apply {
-            put("fields", fields)
-            put("limit", 15000)
-        }
+        val batchSize = 2000
+        var offset = 0
+        val allPackagings = mutableListOf<PackagingItem>()
 
-        val args = JSONArray().apply {
-            put(db); put(uid); put(password)
-            put("product.packaging")
-            put("search_read")
-            put(JSONArray().apply { put(domain) })
-            put(kwargs)
-        }
+        while (true) {
+            val kwargs = JSONObject().apply {
+                put("fields", fields)
+                put("offset", offset)
+                put("limit", batchSize)
+            }
 
-        val result = postJsonRpc("object", "execute_kw", args) as? JSONArray ?: return emptyList()
-        val list = mutableListOf<PackagingItem>()
+            val args = JSONArray().apply {
+                put(db); put(uid); put(password)
+                put("product.packaging")
+                put("search_read")
+                put(JSONArray().apply { put(domain) })
+                put(kwargs)
+            }
 
-        for (i in 0 until result.length()) {
-            val obj = result.getJSONObject(i)
-            val id = obj.optInt("id")
-            val barcode = obj.optString("barcode", "").trim()
-            if (barcode.isBlank()) continue
+            val result = postJsonRpc("object", "execute_kw", args) as? JSONArray ?: break
+            val length = result.length()
+            if (length == 0) break
 
-            val name = obj.optString("name", "كرتون").trim()
-            val qty = obj.optDouble("qty", 1.0)
+            for (i in 0 until length) {
+                val obj = result.getJSONObject(i)
+                val id = obj.optInt("id")
+                val barcode = obj.optString("barcode", "").trim()
+                if (barcode.isBlank()) continue
 
-            val prodArr = obj.optJSONArray("product_id")
-            val prodId = prodArr?.optInt(0, 0) ?: 0
-            val prodName = prodArr?.optString(1, "") ?: ""
+                val name = obj.optString("name", "كرتون").trim()
+                val qty = obj.optDouble("qty", 1.0)
 
-            list.add(
-                PackagingItem(
-                    id = id,
-                    barcode = barcode,
-                    productId = prodId,
-                    productBarcode = "",
-                    name = name,
-                    qty = qty
+                val prodArr = obj.optJSONArray("product_id")
+                val prodId = prodArr?.optInt(0, 0) ?: 0
+
+                allPackagings.add(
+                    PackagingItem(
+                        id = id,
+                        barcode = barcode,
+                        productId = prodId,
+                        productBarcode = "",
+                        name = name,
+                        qty = qty
+                    )
                 )
-            )
+            }
+
+            offset += length
+            onProgress?.invoke(offset)
+            if (length < batchSize) break
         }
 
-        return list
+        return allPackagings
     }
 }

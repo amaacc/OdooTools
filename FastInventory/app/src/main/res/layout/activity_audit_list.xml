@@ -46,8 +46,8 @@
             android:layout_width="wrap_content"
             android:layout_height="36dp"
             android:minHeight="0dp"
-            android:text="🗑️ مسح الكل"
-            android:textColor="@color/text_danger"
+            android:text="📁 إدارة الجلسات"
+            android:textColor="@color/primary_light"
             android:textSize="12sp"
             android:textStyle="bold" />
     </LinearLayout>

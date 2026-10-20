@@ -13,13 +13,18 @@ import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.KeyEvent
+import android.view.LayoutInflater
 import android.view.View
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -36,6 +41,9 @@ class MainActivity : AppCompatActivity() {
     // UI elements
     private lateinit var btnSettings: ImageButton
     private lateinit var btnCameraScan: ImageButton
+    private lateinit var btnManualEntry: ImageButton
+    private lateinit var btnManageSessions: ImageButton
+
     private lateinit var txtDeviceAndSession: TextView
     private lateinit var txtActiveZone: TextView
     private lateinit var btnChangeZone: Button
@@ -62,6 +70,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var txtTotalUnitsCount: TextView
 
     private lateinit var btnViewAuditList: Button
+    private lateinit var btnAuditCheck: Button
     private lateinit var btnConsolidator: Button
     private lateinit var btnExportReport: Button
 
@@ -111,6 +120,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        sessionManager.reloadActiveSession()
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 registerReceiver(scannerHelper.intentReceiver, scannerHelper.getIntentFilter(), Context.RECEIVER_EXPORTED)
@@ -152,6 +162,9 @@ class MainActivity : AppCompatActivity() {
     private fun initViews() {
         btnSettings = findViewById(R.id.btnSettings)
         btnCameraScan = findViewById(R.id.btnCameraScan)
+        btnManualEntry = findViewById(R.id.btnManualEntry)
+        btnManageSessions = findViewById(R.id.btnManageSessions)
+
         txtDeviceAndSession = findViewById(R.id.txtDeviceAndSession)
         txtActiveZone = findViewById(R.id.txtActiveZone)
         btnChangeZone = findViewById(R.id.btnChangeZone)
@@ -178,6 +191,7 @@ class MainActivity : AppCompatActivity() {
         txtTotalUnitsCount = findViewById(R.id.txtTotalUnitsCount)
 
         btnViewAuditList = findViewById(R.id.btnViewAuditList)
+        btnAuditCheck = findViewById(R.id.btnAuditCheck)
         btnConsolidator = findViewById(R.id.btnConsolidator)
         btnExportReport = findViewById(R.id.btnExportReport)
     }
@@ -196,6 +210,14 @@ class MainActivity : AppCompatActivity() {
             cameraScanLauncher.launch(intent)
         }
 
+        btnManualEntry.setOnClickListener {
+            showManualBarcodeEntryDialog()
+        }
+
+        btnManageSessions.setOnClickListener {
+            startActivity(Intent(this, SessionsActivity::class.java))
+        }
+
         btnSettings.setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
@@ -206,6 +228,10 @@ class MainActivity : AppCompatActivity() {
 
         btnViewAuditList.setOnClickListener {
             startActivity(Intent(this, AuditListActivity::class.java))
+        }
+
+        btnAuditCheck.setOnClickListener {
+            startActivity(Intent(this, ShelfAuditActivity::class.java))
         }
 
         btnConsolidator.setOnClickListener {
@@ -254,10 +280,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleBarcodeScanned(barcode: String) {
-        val result = sessionManager.recordScan(barcode)
+        val result = sessionManager.recordScan(barcode = barcode, scanMethod = "SCAN")
         currentScannedBarcode = result.barcode
 
-        // Blind Count Display Update (Never shows system stock!)
+        // Blind Count Display Update (Never shows system stock during blind count!)
         viewIdlePrompt.visibility = View.GONE
         viewScannedProduct.visibility = View.VISIBLE
 
@@ -276,11 +302,11 @@ class MainActivity : AppCompatActivity() {
         txtCountedQty.text = String.format(Locale.US, "%.0f", result.totalCountedInZone)
 
         val statusText = if (result.isPackaging) {
-            "✅ تم حصر كرتون (+${String.format(Locale.US, "%.0f", result.addedQty)} حبة) | إجمالي الرف: ${String.format(Locale.US, "%.0f", result.totalCountedInZone)}"
+            "✅ تم حصر كرتون (+${String.format(Locale.US, "%.0f", result.addedQty)} حبة) | إجمالي الرف: ${String.format(Locale.US, "%.0f", result.totalCountedInZone)} (#${result.shelfSeq})"
         } else if (result.isUnknown) {
-            "⚠️ صنف غير معرّف (+1 حبة) | إجمالي الرف: ${String.format(Locale.US, "%.0f", result.totalCountedInZone)}"
+            "⚠️ صنف غير معرّف (+1 حبة) | إجمالي الرف: ${String.format(Locale.US, "%.0f", result.totalCountedInZone)} (#${result.shelfSeq})"
         } else {
-            "✅ تمت إضافة 1 حبة | إجمالي الرف: ${String.format(Locale.US, "%.0f", result.totalCountedInZone)}"
+            "✅ تمت إضافة 1 حبة | إجمالي الرف: ${String.format(Locale.US, "%.0f", result.totalCountedInZone)} (#${result.shelfSeq})"
         }
         txtLastAddedStatus.text = statusText
         txtLastAddedStatus.setTextColor(
@@ -341,6 +367,83 @@ class MainActivity : AppCompatActivity() {
         updateSessionUi()
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Manual Barcode / Code Entry Dialog
+    // ─────────────────────────────────────────────────────────────────────────
+    private fun showManualBarcodeEntryDialog() {
+        val view = LayoutInflater.from(this).inflate(R.layout.dialog_manual_entry, null)
+        val etBarcode = view.findViewById<EditText>(R.id.etManualBarcode)
+        val txtPreview = view.findViewById<TextView>(R.id.txtManualProductPreview)
+        val etQty = view.findViewById<EditText>(R.id.etManualQty)
+        val spLevel = view.findViewById<Spinner>(R.id.spManualShelfLevel)
+
+        val levels = listOf("- بدون تحديد -", "علوي (أعلى)", "أوسط (وسط)", "سفلي (أسفل)", "طابق 1", "طابق 2", "طابق 3")
+        spLevel.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, levels)
+
+        // Instant search preview as user types
+        etBarcode.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                val q = s?.toString()?.trim() ?: ""
+                if (q.length >= 2) {
+                    val (prod, pkg) = db.lookupBarcode(q)
+                    if (prod != null) {
+                        txtPreview.visibility = View.VISIBLE
+                        txtPreview.text = "✅ ${prod.nameAr}\nكود: ${prod.defaultCode} | رصيد المعرض: ${String.format(Locale.US, "%.0f", prod.systemQty)} حبة"
+                    } else {
+                        txtPreview.visibility = View.GONE
+                    }
+                } else {
+                    txtPreview.visibility = View.GONE
+                }
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+
+        AlertDialog.Builder(this)
+            .setTitle("✏️ إدخال باركود أو كود يدوي")
+            .setView(view)
+            .setPositiveButton("إضافة للجرد") { _, _ ->
+                val barcode = etBarcode.text.toString().trim()
+                if (barcode.isBlank()) {
+                    Toast.makeText(this, "يرجى كتابة رقم الباركود أو الكود", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                val qty = etQty.text.toString().toDoubleOrNull() ?: 1.0
+                val level = spLevel.selectedItem?.toString()?.replace("- بدون تحديد -", "") ?: ""
+
+                val result = sessionManager.recordScan(
+                    barcode = barcode,
+                    customQty = qty,
+                    scanMethod = "MANUAL",
+                    shelfLevel = level
+                )
+
+                currentScannedBarcode = result.barcode
+
+                viewIdlePrompt.visibility = View.GONE
+                viewScannedProduct.visibility = View.VISIBLE
+
+                txtBarcode.text = result.barcode
+                txtDefaultCode.text = if (result.defaultCode != "-") "كود: ${result.defaultCode}" else ""
+                txtProductNameAr.text = result.nameAr
+                txtProductNameEn.text = result.nameEn
+
+                badgePackaging.visibility = if (result.isPackaging) View.VISIBLE else View.GONE
+                txtCountedQty.text = String.format(Locale.US, "%.0f", result.totalCountedInZone)
+
+                val statusText = "✏️ إدخال يدوي (+${String.format(Locale.US, "%.0f", result.addedQty)} حبة) | تسلسل #${result.shelfSeq}"
+                txtLastAddedStatus.text = statusText
+                txtLastAddedStatus.setTextColor(getColor(R.color.accent_gold))
+
+                triggerAudioAndHaptic(result.isPackaging, result.isUnknown)
+                flashScanCard(result.isPackaging, result.isUnknown)
+                updateSessionUi()
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
     private fun showCustomQuantityDialog() {
         val bc = currentScannedBarcode
         if (bc == null) {
@@ -377,30 +480,51 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showChangeZoneDialog() {
-        val container = android.widget.FrameLayout(this).apply {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(48, 20, 48, 10)
         }
-        val input = EditText(this).apply {
+
+        val inputZone = EditText(this).apply {
             setText(sessionManager.currentZone)
             setSelection(text.length)
-            hint = "مثال: رف A-12 أو صالة العرض"
+            hint = "اسم الرف (مثال: رف A-12 أو صالة العرض)"
             setTextColor(getColor(R.color.text_primary))
             setHintTextColor(getColor(R.color.text_secondary))
             setBackgroundResource(R.drawable.bg_zone_pill)
             setPadding(28, 20, 28, 20)
         }
-        container.addView(input)
+        layout.addView(inputZone)
+
+        val tvLevelPrompt = TextView(this).apply {
+            text = "مستوى / موضع الرف (اختياري لتحديد مكان الصنف بدقة):"
+            setTextColor(getColor(R.color.text_secondary))
+            textSize = 11f
+            setPadding(4, 16, 4, 6)
+        }
+        layout.addView(tvLevelPrompt)
+
+        val levels = listOf("- بدون تحديد مستوى -", "علوي (أعلى الرف)", "أوسط (وسط الرف)", "سفلي (أسفل الرف)", "طابق 1", "طابق 2", "طابق 3")
+        val spLevel = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, levels)
+            setBackgroundResource(R.drawable.bg_zone_pill)
+            val curLevel = sessionManager.currentShelfLevel
+            val curIdx = levels.indexOfFirst { it.startsWith(curLevel) }
+            if (curIdx >= 0) setSelection(curIdx)
+        }
+        layout.addView(spLevel)
 
         AlertDialog.Builder(this)
-            .setTitle("🏷️ تغيير المنطقة أو الرف الحالي")
-            .setMessage("سيتم تسجيل كافة الباركودات القادمة تحت اسم هذه المنطقة:")
-            .setView(container)
-            .setPositiveButton("تغيير") { _, _ ->
-                val newZone = input.text.toString().trim()
+            .setTitle("🏷️ تغيير الرف أو المنطقة الحالية")
+            .setMessage("سيتم تسجيل كافة المسوحات القادمة تحت هذا الرف وموضعه:")
+            .setView(layout)
+            .setPositiveButton("تثبيت") { _, _ ->
+                val newZone = inputZone.text.toString().trim()
+                val level = spLevel.selectedItem?.toString()?.replace("- بدون تحديد مستوى -", "") ?: ""
                 if (newZone.isNotBlank()) {
-                    sessionManager.updateZone(newZone)
+                    sessionManager.updateZone(newZone, level)
                     updateSessionUi()
-                    Toast.makeText(this, "تم تغيير المنطقة إلى: $newZone", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "تم تغيير الرف إلى: $newZone", Toast.LENGTH_SHORT).show()
                 }
             }
             .setNegativeButton("إلغاء", null)
@@ -408,8 +532,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateSessionUi() {
-        txtActiveZone.text = "المنطقة: ${sessionManager.currentZone}"
-        txtDeviceAndSession.text = "${settingsManager.getDeviceName()} | ${sessionManager.currentSession.name}"
+        val session = sessionManager.currentSession
+        val whName = if (session.warehouseName.isNotBlank()) session.warehouseName else settingsManager.getSelectedWarehouseName()
+        val levelPart = if (sessionManager.currentShelfLevel.isNotBlank()) " [${sessionManager.currentShelfLevel}]" else ""
+
+        txtActiveZone.text = "المنطقة: ${sessionManager.currentZone}$levelPart"
+        txtDeviceAndSession.text = "$whName | ${session.name}"
 
         val (uniqueCount, totalUnits) = sessionManager.getSessionSummary()
         txtTotalItemsCount.text = uniqueCount.toString()
@@ -471,12 +599,15 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        val whName = if (sessionManager.currentSession.warehouseName.isNotBlank()) sessionManager.currentSession.warehouseName else settingsManager.getSelectedWarehouseName()
+
         val res = ReportExportEngine.exportSessionReport(
             context = this,
             sessionName = sessionManager.currentSession.name,
             zoneName = sessionManager.currentZone,
             items = items,
-            db = db
+            db = db,
+            warehouseName = whName
         )
 
         // Silent SMTP if enabled, otherwise native share/email intent
@@ -484,7 +615,7 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "جاري الإرسال الصامت عبر خادم SMTP...", Toast.LENGTH_SHORT).show()
             EmailDispatcher.sendReportViaSmtpAsync(
                 context = this,
-                subject = "تقرير الجرد السريع: ${sessionManager.currentSession.name}",
+                subject = "تقرير الجرد السريع: ${sessionManager.currentSession.name} — $whName",
                 bodyText = res.summaryText,
                 files = listOf(res.xlsxFile, res.csvFile),
                 callback = object : EmailDispatcher.DispatchCallback {
@@ -495,7 +626,7 @@ class MainActivity : AppCompatActivity() {
                         Toast.makeText(this@MainActivity, "تعذر الإرسال الصامت ($error)، سيتم فتح شاشة الإرسال الافتراضية.", Toast.LENGTH_LONG).show()
                         EmailDispatcher.sendReportViaIntent(
                             context = this@MainActivity,
-                            subject = "تقرير الجرد السريع: ${sessionManager.currentSession.name}",
+                            subject = "تقرير الجرد السريع: ${sessionManager.currentSession.name} — $whName",
                             bodyText = res.summaryText,
                             files = listOf(res.xlsxFile, res.csvFile),
                             targetEmail = settingsManager.getTargetEmail()
@@ -506,7 +637,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             EmailDispatcher.sendReportViaIntent(
                 context = this,
-                subject = "تقرير الجرد السريع: ${sessionManager.currentSession.name} — ${sessionManager.currentZone}",
+                subject = "تقرير الجرد السريع: ${sessionManager.currentSession.name} — ${sessionManager.currentZone} ($whName)",
                 bodyText = res.summaryText,
                 files = listOf(res.xlsxFile, res.csvFile),
                 targetEmail = settingsManager.getTargetEmail()
@@ -525,9 +656,9 @@ class MainActivity : AppCompatActivity() {
                     settingsManager.getPassword()
                 )
                 val currentVersion = try {
-                    packageManager.getPackageInfo(packageName, 0).versionName ?: "1.04"
+                    packageManager.getPackageInfo(packageName, 0).versionName ?: "1.05"
                 } catch (e: Exception) {
-                    "1.04"
+                    "1.05"
                 }
                 AppUpdateManager.checkForUpdate(this, client, currentVersion)
             } catch (e: Exception) {

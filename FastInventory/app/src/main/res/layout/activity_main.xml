@@ -40,11 +40,31 @@
                 android:id="@+id/btnCameraScan"
                 android:layout_width="38dp"
                 android:layout_height="38dp"
-                android:layout_marginStart="8dp"
+                android:layout_marginStart="6dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:contentDescription="Camera Scan"
                 android:src="@drawable/ic_camera"
                 app:tint="@color/text_cyan" />
+
+            <ImageButton
+                android:id="@+id/btnManualEntry"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:layout_marginStart="6dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Manual Barcode Entry"
+                android:src="@drawable/ic_edit"
+                app:tint="@color/accent_gold" />
+
+            <ImageButton
+                android:id="@+id/btnManageSessions"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:layout_marginStart="6dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Manage Sessions"
+                android:src="@drawable/ic_folder"
+                app:tint="@color/primary_light" />
 
             <View
                 android:layout_width="0dp"
@@ -476,35 +496,47 @@
             android:id="@+id/btnViewAuditList"
             android:layout_width="0dp"
             android:layout_height="46dp"
-            android:layout_marginEnd="6dp"
+            android:layout_marginEnd="4dp"
             android:layout_weight="1"
             android:backgroundTint="@color/border_subtle"
-            android:text="📋 القائمة"
+            android:text="📋 السجل"
             android:textColor="@color/text_primary"
-            android:textSize="12sp"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnAuditCheck"
+            android:layout_width="0dp"
+            android:layout_height="46dp"
+            android:layout_marginEnd="4dp"
+            android:layout_weight="1.2"
+            android:backgroundTint="@color/accent_gold"
+            android:text="🔍 تشييك الرف"
+            android:textColor="@color/black"
+            android:textSize="11sp"
             android:textStyle="bold" />
 
         <Button
             android:id="@+id/btnConsolidator"
             android:layout_width="0dp"
             android:layout_height="46dp"
-            android:layout_marginEnd="6dp"
-            android:layout_weight="1.2"
+            android:layout_marginEnd="4dp"
+            android:layout_weight="1"
             android:backgroundTint="@color/accent"
-            android:text="🔀 دمج الأجهزة"
+            android:text="🔀 دمج"
             android:textColor="@color/white"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:textStyle="bold" />
 
         <Button
             android:id="@+id/btnExportReport"
             android:layout_width="0dp"
             android:layout_height="46dp"
-            android:layout_weight="1.4"
+            android:layout_weight="1.3"
             android:backgroundTint="@color/primary"
-            android:text="📊 تصدير وإرسال"
+            android:text="📊 تصدير"
             android:textColor="@color/white"
-            android:textSize="13sp"
+            android:textSize="12sp"
             android:textStyle="bold" />
     </LinearLayout>
 

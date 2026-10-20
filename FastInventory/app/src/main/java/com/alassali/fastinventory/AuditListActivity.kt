@@ -1,6 +1,7 @@
 package com.alassali.fastinventory
 
 import android.app.AlertDialog
+import android.content.Intent
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
@@ -59,7 +60,9 @@ class AuditListActivity : AppCompatActivity() {
         )
         recycler.adapter = adapter
 
-        btnClearSession.setOnClickListener { confirmClearSession() }
+        btnClearSession.setOnClickListener {
+            startActivity(Intent(this, SessionsActivity::class.java))
+        }
 
         btnExport.setOnClickListener { exportAndSend() }
 
@@ -149,16 +152,7 @@ class AuditListActivity : AppCompatActivity() {
     }
 
     private fun confirmClearSession() {
-        AlertDialog.Builder(this)
-            .setTitle("مسح جلسة الجرد بالكامل")
-            .setMessage("هل أنت متأكد من مسح جميع الأصناف المحصورة في هذه الجلسة؟ لا يمكن التراجع عن هذا الإجراء.")
-            .setPositiveButton("نعم، مسح الكل") { _, _ ->
-                sessionManager.clearActiveSession()
-                loadData()
-                Toast.makeText(this, "تم مسح الجلسة بنجاح", Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton("إلغاء", null)
-            .show()
+        startActivity(Intent(this, SessionsActivity::class.java))
     }
 
     private fun exportAndSend() {
@@ -172,7 +166,8 @@ class AuditListActivity : AppCompatActivity() {
             sessionName = sessionManager.currentSession.name,
             zoneName = sessionManager.currentZone,
             items = allItems,
-            db = db
+            db = db,
+            warehouseName = sessionManager.currentSession.warehouseName
         )
 
         val settings = SettingsManager(this)
