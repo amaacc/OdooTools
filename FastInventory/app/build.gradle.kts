@@ -11,8 +11,8 @@ android {
         applicationId = "com.alassali.fastinventory"
         minSdk = 29
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.05"
+        versionCode = 6
+        versionName = "1.06"
     }
 
     buildTypes {

@@ -110,3 +110,18 @@ data class ConsolidatedItem(
     val varianceValue: Double
         get() = varianceQty * costPrice
 }
+
+data class InventoryReportMetadata(
+    val sessionName: String,
+    val sessionId: Long = 0,
+    val warehouseId: Int = 0,
+    val warehouseCode: String = "",
+    val warehouseName: String = "",
+    val lotStockId: Int = 0,
+    val zoneName: String = "",
+    val deviceName: String = "",
+    val createdAt: String = "",
+    val exportTimestamp: String = "",
+    val isConsolidated: Boolean = false,
+    val deviceList: List<String> = emptyList()
+) : Serializable
