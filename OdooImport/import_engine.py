@@ -723,6 +723,7 @@ class ImportEngine:
         supplier_no = vendor_info.get('supplier_no', 'SUPP')
         supplier_name = vendor_info.get('supplier_name', 'Supplier')
         supplier_tag = vendor_info.get('tag_name', f"{supplier_no} {supplier_name}".strip())
+        partner_id = vendor_info.get('partner_id')
 
         # 2. Dynamic Header Row & Column Mapping
         notify(15, "جاري الكشف التلقائي عن ترويسة الأعمدة ومطابقتها...")
@@ -1070,6 +1071,10 @@ class ImportEngine:
             "type",
             "Invoicing Policy",
             "Available in POS",
+            "seller_ids/partner_id/.id",
+            "seller_ids/price",
+            "seller_ids/min_qty",
+            "seller_ids/delay",
             "ملاحظات التدقيق (Validation Notes)",
             "Description"
         ]
@@ -1084,6 +1089,9 @@ class ImportEngine:
         for row_idx, r in enumerate(processed_rows, start=2):
             all_notes = r['errors'] + r['warnings']
             notes_str = " | ".join(all_notes) if all_notes else ""
+
+            vend_id_val = partner_id if partner_id else ""
+            has_valid_supp = bool(vend_id_val and not r['is_bc_duplicate'] and r['internal_ref'])
 
             row_data = [
                 r['sequence'],
@@ -1103,6 +1111,10 @@ class ImportEngine:
                 r['type'],
                 r.get('invoice_policy', 'Delivered quantities'),
                 "TRUE" if r['available_in_pos'] else "FALSE",
+                vend_id_val if has_valid_supp else "",
+                r['cost'] if has_valid_supp else "",
+                1.0 if has_valid_supp else "",
+                0 if has_valid_supp else "",
                 notes_str,
                 ""
             ]
@@ -1119,6 +1131,7 @@ class ImportEngine:
             ws_import.cell(row=row_idx, column=6).number_format = '#,##0.00'
             ws_import.cell(row=row_idx, column=7).number_format = '#,##0.00'
             ws_import.cell(row=row_idx, column=8).number_format = '#,##0.00'
+            ws_import.cell(row=row_idx, column=19).number_format = '#,##0.00'
 
             # Highlight specific error cells
             c_bc = ws_import.cell(row=row_idx, column=3)
@@ -1345,6 +1358,65 @@ class ImportEngine:
                     max_len = max(max_len, len(val_str))
                 ws_tags.column_dimensions[col_letter].width = min(max(max_len + 4, 15), 45)
 
+        # 7. Sheet 4: Vendor Pricelist Sheet (Formatted for Odoo product.supplierinfo import)
+        new_valid_items = [r for r in processed_rows if not r.get('is_bc_duplicate') and r.get('internal_ref')]
+        if new_valid_items:
+            notify(96, "جاري بناء ورقة قائمة أسعار المورد (Vendor Pricelist)...")
+            ws_vendor = wb_out.create_sheet(title="قائمة أسعار المورد")
+            ws_vendor.views.sheetView[0].rightToLeft = True
+
+            v_header_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
+            v_headers = [
+                "كود الصنف (product_tmpl_id/default_code)",
+                "الباركود (Barcode)",
+                "اسم الصنف (Name)",
+                "معرف المورد بأودو (partner_id/.id)",
+                "اسم المورد (partner_id)",
+                "سعر شراء المورد (price)",
+                "الكمية الدنيا (min_qty)",
+                "مهلة التوريد بالأيام (delay)"
+            ]
+            ws_vendor.append(v_headers)
+            for col_idx in range(1, len(v_headers) + 1):
+                cell = ws_vendor.cell(row=1, column=col_idx)
+                cell.fill = v_header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+            vend_id_val = partner_id if partner_id else ""
+            for v_idx, itm in enumerate(new_valid_items, start=2):
+                v_row = [
+                    itm['internal_ref'],
+                    itm['barcode'],
+                    itm['name'],
+                    vend_id_val,
+                    supplier_tag,
+                    itm['cost'],
+                    1.0,
+                    0
+                ]
+                ws_vendor.append(v_row)
+                for col_idx in range(1, len(v_row) + 1):
+                    c = ws_vendor.cell(row=v_idx, column=col_idx)
+                    c.border = thin_border
+                    c.font = Font(name="Calibri", size=11)
+                    c.alignment = Alignment(vertical="center")
+
+                ws_vendor.cell(row=v_idx, column=1).alignment = Alignment(horizontal="center", vertical="center")
+                ws_vendor.cell(row=v_idx, column=2).alignment = Alignment(horizontal="center", vertical="center")
+                ws_vendor.cell(row=v_idx, column=4).alignment = Alignment(horizontal="center", vertical="center")
+                ws_vendor.cell(row=v_idx, column=6).number_format = '#,##0.00'
+                ws_vendor.cell(row=v_idx, column=7).alignment = Alignment(horizontal="center", vertical="center")
+                ws_vendor.cell(row=v_idx, column=8).alignment = Alignment(horizontal="center", vertical="center")
+
+            for col in ws_vendor.columns:
+                max_len = 0
+                col_letter = get_column_letter(col[0].column)
+                for cell in col:
+                    val_str = str(cell.value or '')
+                    max_len = max(max_len, len(val_str))
+                ws_vendor.column_dimensions[col_letter].width = min(max(max_len + 4, 15), 45)
+
         # Ensure OdooImport is the active visible tab
         wb_out.active = ws_import
 
@@ -1380,6 +1452,8 @@ class ImportEngine:
             'missing_tags': list(missing_new_tags.keys()),
             'supplier_no': supplier_no,
             'supplier_name': supplier_name,
+            'partner_id': partner_id,
+            'vendor_info': vendor_info,
             'output_file': saved_file,
             'save_warning': save_warning,
             'can_archive': total_errors == 0,

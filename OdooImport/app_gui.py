@@ -391,7 +391,7 @@ class OdooImportApp(ctk.CTk):
         act_title.pack(anchor="e", padx=16, pady=(12, 6))
 
         btn_row = ctk.CTkFrame(card_actions, fg_color="transparent")
-        btn_row.pack(fill="x", padx=16, pady=(4, 12))
+        btn_row.pack(fill="x", padx=16, pady=(4, 6))
 
         self.btn_process = ctk.CTkButton(
             btn_row,
@@ -414,19 +414,34 @@ class OdooImportApp(ctk.CTk):
             state="disabled",
             command=self.open_import_file
         )
-        self.btn_open_file.pack(side="left", padx=(0, 8))
+        self.btn_open_file.pack(side="left", padx=(0, 0))
+
+        btn_row2 = ctk.CTkFrame(card_actions, fg_color="transparent")
+        btn_row2.pack(fill="x", padx=16, pady=(0, 12))
+
+        self.btn_sync_vendor_prices = ctk.CTkButton(
+            btn_row2,
+            text="⚡ مزامنة أسعار المورد في خانة المشتريات بأودو (Purchase Tab)",
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            fg_color="#D97706",
+            hover_color="#B45309",
+            height=42,
+            state="disabled",
+            command=self.sync_vendor_prices
+        )
+        self.btn_sync_vendor_prices.pack(side="right", fill="x", expand=True, padx=(8, 0))
 
         self.btn_archive = ctk.CTkButton(
-            card_actions,
-            text="📥 اعتماد وأرشفة الأصناف السليمة في AllNewItems.xlsx",
+            btn_row2,
+            text="📥 أرشفة الأصناف السليمة في AllNewItems.xlsx",
             font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
             fg_color="#059669",
             hover_color="#047857",
-            height=40,
+            height=42,
             state="disabled",
             command=self.archive_items
         )
-        self.btn_archive.pack(fill="x", padx=16, pady=(0, 14))
+        self.btn_archive.pack(side="left", padx=(0, 0))
 
         # Progress bar
         self.progress_bar = ctk.CTkProgressBar(card_actions, height=8, fg_color="#E2E8F0", progress_color="#1E6EBA")
@@ -561,13 +576,15 @@ class OdooImportApp(ctk.CTk):
         self.current_vendor_info = res
         tag_name = res.get('tag_name') or query
         is_tag = res.get('is_tag_in_odoo', False)
+        partner_id = res.get('partner_id')
+        p_badge = f" [Partner ID: {partner_id}]" if partner_id else ""
 
         if res.get('success'):
             if is_tag:
-                text = f"🟢 معرّف كـ Tag في أودو: {tag_name}"
+                text = f"🟢 معرّف كـ Tag في أودو: {tag_name}{p_badge}"
                 color = "#15803D"
             else:
-                text = f"🟡 مسجل كشريك في أودو: {tag_name} (غير معرّف كـ Tag - سيُدرج بورقة التاجات)"
+                text = f"🟡 مسجل كشريك في أودو: {tag_name}{p_badge} (غير معرّف كـ Tag - سيُدرج بورقة التاجات)"
                 color = "#B45309"
         else:
             text = f"⚪ مورد محلي: {tag_name} (غير مسجل بأودو - سيُدرج بورقة التاجات)"
@@ -611,6 +628,8 @@ class OdooImportApp(ctk.CTk):
         self.btn_process.configure(state="disabled")
         self.btn_open_file.configure(state="disabled")
         self.btn_archive.configure(state="disabled")
+        if hasattr(self, 'btn_sync_vendor_prices'):
+            self.btn_sync_vendor_prices.configure(state="disabled")
         self.txt_log.delete("1.0", "end")
 
         thread = threading.Thread(
@@ -686,6 +705,10 @@ class OdooImportApp(ctk.CTk):
         if missing_tags_count > 0:
             self.log_message(f"🏷️ تنبيه تاجات: يوجد {missing_tags_count} وسم غير معرّف في أودو ({', '.join(missing_tags[:5])}) - تم إنشاء ورقة 'التاجات الواجب تعريفها' لتعريفها قبل الرفع.")
 
+        if hasattr(self, 'btn_sync_vendor_prices'):
+            self.btn_sync_vendor_prices.configure(state="normal")
+            self.log_message("⚡ تم تفعيل زر 'مزامنة أسعار المورد في خانة المشتريات بأودو' لربط أسعار الشراء آلياً.")
+
         if errs == 0:
             self.btn_archive.configure(state="normal")
             self.log_message("✅ الملف سليم 100% وخالٍ من الأخطاء! يمكنك الآن الاعتماد والأرشفة.")
@@ -710,6 +733,8 @@ class OdooImportApp(ctk.CTk):
 
     def _on_error(self, err_msg: str):
         self.btn_process.configure(state="normal")
+        if hasattr(self, 'btn_sync_vendor_prices'):
+            self.btn_sync_vendor_prices.configure(state="normal" if getattr(self, 'last_result', None) else "disabled")
         self.progress_bar.set(0)
         self.lbl_status.configure(text="❌ حدث خطأ أثناء المعالجة")
         self.log_message(f"❌ خطأ: {err_msg}")
@@ -723,6 +748,86 @@ class OdooImportApp(ctk.CTk):
                 subprocess.Popen(["explorer", self.output_import_path])
         else:
             messagebox.showwarning("تنبيه", "الملف غير موجود بعد.", parent=self)
+
+    def sync_vendor_prices(self):
+        """
+        Synchronizes vendor purchase prices directly into Odoo's product.supplierinfo (Purchase tab).
+        """
+        if not getattr(self, 'last_result', None):
+            messagebox.showwarning("تنبيه", "يرجى تجهيز ملف الأصناف أولاً.", parent=self)
+            return
+
+        partner_id = self.last_result.get('partner_id')
+        if not partner_id:
+            if self.current_vendor_info and self.current_vendor_info.get('partner_id'):
+                partner_id = self.current_vendor_info.get('partner_id')
+            else:
+                q = self.entry_vendor.get().strip()
+                v_res = self.engine.verifier.resolve_vendor(q)
+                partner_id = v_res.get('partner_id')
+                if partner_id:
+                    self.current_vendor_info = v_res
+
+        if not partner_id:
+            messagebox.showerror(
+                "خطأ في تحديد المورد",
+                "تعذر تحديد معرّف المورد في أودو (Partner ID).\nيرجى التأكد من كتابة رقم المورد أو اسمه المسجل في أودو والضغط على زر التحقق.",
+                parent=self
+            )
+            return
+
+        supp_name = self.last_result.get('supplier_name') or self.entry_vendor.get().strip()
+        items = self.last_result.get('processed_rows', [])
+        valid_items = [it for it in items if not it.get('errors') and (it.get('internal_ref') or it.get('barcode'))]
+
+        if not valid_items:
+            messagebox.showwarning("تنبيه", "لا توجد أصناف صالحة للمزامنة في الدفعة الحالية.", parent=self)
+            return
+
+        confirm = messagebox.askyesno(
+            "تأكيد مزامنة أسعار المورد",
+            f"سيتم الآن فحص وربط أسعار الشراء لـ {len(valid_items)} صنف في خانة المشتريات (Purchase Tab) في أودو 17 للمورد:\n\n"
+            f"🏢 {supp_name} (ID: {partner_id})\n\n"
+            f"ملاحظة: تأكد من أن الأصناف تم تعريفها أو رفعها مسبقاً في أودو، ليتمكن البرنامج من ربط الأسعار ببطاقات الأصناف.\n\n"
+            f"هل تريد المتابعة وبدء المزامنة الآن؟",
+            parent=self
+        )
+        if not confirm:
+            return
+
+        self.btn_sync_vendor_prices.configure(state="disabled")
+        self.btn_process.configure(state="disabled")
+        self.lbl_status.configure(text="جاري مزامنة أسعار المورد في أودو...")
+        self.progress_bar.set(0.1)
+
+        def worker():
+            def prog_cb(pct, msg):
+                self.after(0, lambda: self._on_progress(pct, msg))
+
+            res = self.engine.verifier.sync_vendor_supplierinfo(
+                items=valid_items,
+                partner_id=partner_id,
+                progress_cb=prog_cb
+            )
+
+            def on_finish():
+                self.btn_sync_vendor_prices.configure(state="normal")
+                self.btn_process.configure(state="normal")
+                self.progress_bar.set(1.0)
+                if res.get('success'):
+                    self.lbl_status.configure(text="✅ اكتملت مزامنة أسعار المورد بنجاح")
+                    self.log_message("\n" + "=" * 55)
+                    self.log_message("⚡ نتيجة مزامنة أسعار المورد بأودو (Purchase Tab):")
+                    self.log_message(res.get('message', ''))
+                    messagebox.showinfo("مزامنة أسعار المورد", res.get('message', 'تمت المزامنة بنجاح!'), parent=self)
+                else:
+                    self.lbl_status.configure(text="❌ فشلت مزامنة أسعار المورد")
+                    self.log_message(f"❌ خطأ مزامنة أسعار المورد: {res.get('message')}")
+                    messagebox.showerror("خطأ في المزامنة", res.get('message', 'حدث خطأ أثناء المزامنة'), parent=self)
+
+            self.after(0, on_finish)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def archive_items(self):
         if not self.last_result:

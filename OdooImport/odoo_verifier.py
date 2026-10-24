@@ -2,7 +2,7 @@ import os
 import sys
 import re
 import xmlrpc.client
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Callable
 
 # Ensure current and parent directory are in sys.path to access security.py
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -375,11 +375,74 @@ class OdooVerifier:
 
         return max_seq
 
+    def _find_partner(self, code: str, name: str = "") -> Optional[Dict[str, Any]]:
+        """
+        Searches res.partner in Odoo by:
+        1. internal_ref_code (exact match)
+        2. ref (exact match)
+        3. name (ilike)
+        Returns the best matching partner dict or None.
+        """
+        if not self.authenticate():
+            return None
+        models = self._get_models()
+
+        clean_code = (code or '').strip()
+        clean_name = (name or '').strip()
+
+        # 1. Search by internal_ref_code
+        if clean_code:
+            try:
+                partners = models.execute_kw(
+                    self.db, self.uid, self.password,
+                    'res.partner', 'search_read',
+                    [[['internal_ref_code', '=', clean_code]]],
+                    {'fields': ['id', 'name', 'display_name', 'internal_ref_code', 'ref', 'supplier_rank'], 'limit': 5}
+                )
+                if partners:
+                    sorted_p = sorted(partners, key=lambda x: x.get('supplier_rank') or 0, reverse=True)
+                    return sorted_p[0]
+            except Exception as e:
+                print(f"[OdooVerifier] _find_partner internal_ref_code error: {e}")
+
+        # 2. Search by ref
+        if clean_code:
+            try:
+                partners = models.execute_kw(
+                    self.db, self.uid, self.password,
+                    'res.partner', 'search_read',
+                    [[['ref', '=', clean_code]]],
+                    {'fields': ['id', 'name', 'display_name', 'internal_ref_code', 'ref', 'supplier_rank'], 'limit': 5}
+                )
+                if partners:
+                    sorted_p = sorted(partners, key=lambda x: x.get('supplier_rank') or 0, reverse=True)
+                    return sorted_p[0]
+            except Exception as e:
+                print(f"[OdooVerifier] _find_partner ref error: {e}")
+
+        # 3. Search by name ilike
+        search_term = clean_name if clean_name else clean_code
+        if search_term and len(search_term) >= 2:
+            try:
+                partners = models.execute_kw(
+                    self.db, self.uid, self.password,
+                    'res.partner', 'search_read',
+                    [[['name', 'ilike', search_term]]],
+                    {'fields': ['id', 'name', 'display_name', 'internal_ref_code', 'ref', 'supplier_rank'], 'limit': 10}
+                )
+                if partners:
+                    sorted_p = sorted(partners, key=lambda x: x.get('supplier_rank') or 0, reverse=True)
+                    return sorted_p[0]
+            except Exception as e:
+                print(f"[OdooVerifier] _find_partner name error: {e}")
+
+        return None
+
     def resolve_vendor(self, query: str) -> Dict[str, Any]:
         """
         Resolves a vendor code or name by searching:
         1. product.tag in Odoo: tags starting with code (e.g. '905-315 AlArkan Alsehhiya Company')
-        2. res.partner in Odoo: partners with ref == query or name ilike query
+        2. res.partner in Odoo: partners with internal_ref_code == query or ref == query or name ilike query
         Returns a dict:
         {
             'success': bool,
@@ -443,13 +506,23 @@ class OdooVerifier:
                     s_no = clean
                     s_name = full_tag
 
+                # Always resolve partner_id in res.partner!
+                partner = self._find_partner(s_no, s_name)
+                partner_id = partner['id'] if partner else None
+                if partner:
+                    p_code = (partner.get('internal_ref_code') or partner.get('ref') or '').strip()
+                    if p_code:
+                        s_no = p_code
+                    if partner.get('name'):
+                        s_name = partner['name'].strip()
+
                 return {
                     'success': True,
                     'source': 'product.tag',
                     'tag_name': full_tag,
                     'supplier_no': s_no,
                     'supplier_name': s_name,
-                    'partner_id': None,
+                    'partner_id': partner_id,
                     'tag_id': best['id'],
                     'is_tag_in_odoo': True
                 }
@@ -457,43 +530,32 @@ class OdooVerifier:
             print(f"[OdooVerifier] resolve_vendor product.tag search error: {e}")
 
         # 2. Search in res.partner
-        try:
-            domain = ['|', ['ref', '=', clean], ['name', 'ilike', clean]]
-            partners = models.execute_kw(
+        partner = self._find_partner(clean, clean)
+        if partner:
+            p_ref = str(partner.get('internal_ref_code') or partner.get('ref') or '').strip()
+            p_name = str(partner.get('name') or '').strip()
+            s_no = p_ref if p_ref else clean
+            s_name = p_name
+            full_tag = f"{s_no} {s_name}".strip()
+
+            tag_chk = models.execute_kw(
                 self.db, self.uid, self.password,
-                'res.partner', 'search_read',
-                [domain],
-                {'fields': ['id', 'ref', 'name', 'supplier_rank'], 'limit': 10}
+                'product.tag', 'search_read',
+                [[['name', '=ilike', full_tag]]],
+                {'fields': ['id', 'name'], 'limit': 1}
             )
-            if partners:
-                sorted_p = sorted(partners, key=lambda x: x.get('supplier_rank') or 0, reverse=True)
-                p = sorted_p[0]
-                p_ref = str(p.get('ref') or '').strip()
-                p_name = str(p.get('name') or '').strip()
-                s_no = p_ref if p_ref else clean
-                s_name = p_name
-                full_tag = f"{s_no} {s_name}".strip()
+            tag_id = tag_chk[0]['id'] if tag_chk else None
 
-                tag_chk = models.execute_kw(
-                    self.db, self.uid, self.password,
-                    'product.tag', 'search_read',
-                    [[['name', '=ilike', full_tag]]],
-                    {'fields': ['id', 'name'], 'limit': 1}
-                )
-                tag_id = tag_chk[0]['id'] if tag_chk else None
-
-                return {
-                    'success': True,
-                    'source': 'res.partner',
-                    'tag_name': full_tag,
-                    'supplier_no': s_no,
-                    'supplier_name': s_name,
-                    'partner_id': p['id'],
-                    'tag_id': tag_id,
-                    'is_tag_in_odoo': tag_id is not None
-                }
-        except Exception as e:
-            print(f"[OdooVerifier] resolve_vendor res.partner search error: {e}")
+            return {
+                'success': True,
+                'source': 'res.partner',
+                'tag_name': full_tag,
+                'supplier_no': s_no,
+                'supplier_name': s_name,
+                'partner_id': partner['id'],
+                'tag_id': tag_id,
+                'is_tag_in_odoo': tag_id is not None
+            }
 
         return {
             'success': False,
@@ -504,4 +566,288 @@ class OdooVerifier:
             'partner_id': None,
             'tag_id': None,
             'is_tag_in_odoo': False
+        }
+
+    def sync_vendor_supplierinfo(
+        self,
+        items: List[Dict[str, Any]],
+        partner_id: int,
+        progress_cb: Optional[Callable[[float, str], None]] = None
+    ) -> Dict[str, Any]:
+        """
+        Syncs/creates vendor purchase prices in product.supplierinfo for the given items.
+        Each item must have:
+          - 'default_code' or 'internal_ref'
+          - 'barcode' (optional)
+          - 'cost' or 'ea_cost' (purchase price before VAT)
+          - 'name' (optional)
+        """
+        def notify(pct: float, msg: str):
+            if progress_cb:
+                progress_cb(pct, msg)
+
+        notify(5, "جاري التحقق من الاتصال بأودو ومعلومات المورد...")
+
+        if not self.authenticate():
+            return {
+                'success': False,
+                'message': f"فشل الاتصال بسيرفر أودو: {self.last_error or 'غير متصل'}",
+                'created_count': 0,
+                'updated_count': 0,
+                'unchanged_count': 0,
+                'not_found_count': 0,
+                'not_found_items': [],
+                'errors': [self.last_error or "Auth failed"]
+            }
+
+        models = self._get_models()
+
+        # 1. Verify partner exists
+        try:
+            p_records = models.execute_kw(
+                self.db, self.uid, self.password,
+                'res.partner', 'read',
+                [[partner_id]],
+                {'fields': ['id', 'display_name']}
+            )
+            if not p_records:
+                return {
+                    'success': False,
+                    'message': f"معرّف المورد ({partner_id}) غير موجود في أودو.",
+                    'created_count': 0,
+                    'updated_count': 0,
+                    'unchanged_count': 0,
+                    'not_found_count': 0,
+                    'not_found_items': [],
+                    'errors': ["Partner not found"]
+                }
+            partner_display = p_records[0].get('display_name') or f"Partner #{partner_id}"
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f"خطأ أثناء التحقق من المورد في أودو: {e}",
+                'created_count': 0,
+                'updated_count': 0,
+                'unchanged_count': 0,
+                'not_found_count': 0,
+                'not_found_items': [],
+                'errors': [str(e)]
+            }
+
+        # 2. Extract codes and barcodes to locate product templates
+        notify(15, f"جاري البحث عن الأصناف في أودو للمورد {partner_display}...")
+
+        clean_items = []
+        for it in items:
+            code = str(it.get('internal_ref') or it.get('default_code') or '').strip()
+            bc = str(it.get('barcode') or it.get('ea_barcode') or '').strip()
+            cost_val = it.get('cost')
+            if cost_val is None:
+                cost_val = it.get('ea_cost', 0.0)
+            try:
+                cost = float(cost_val or 0.0)
+            except (ValueError, TypeError):
+                cost = 0.0
+            name = str(it.get('name') or it.get('name_en') or '').strip()
+
+            if code or bc:
+                clean_items.append({
+                    'code': code,
+                    'barcode': bc,
+                    'cost': round(cost, 4),
+                    'name': name
+                })
+
+        if not clean_items:
+            return {
+                'success': False,
+                'message': "لا توجد أصناف صالحة للمزامنة.",
+                'created_count': 0,
+                'updated_count': 0,
+                'unchanged_count': 0,
+                'not_found_count': 0,
+                'not_found_items': [],
+                'errors': ["No valid items"]
+            }
+
+        # 3. Search product.template by default_code
+        all_codes = list(set(it['code'] for it in clean_items if it['code']))
+        code_to_tmpl = {}
+        batch_size = 500
+        for i in range(0, len(all_codes), batch_size):
+            batch = all_codes[i:i + batch_size]
+            tmpls = models.execute_kw(
+                self.db, self.uid, self.password,
+                'product.template', 'search_read',
+                [[['default_code', 'in', batch]]],
+                {'fields': ['id', 'default_code']}
+            )
+            for t in tmpls:
+                c = (t.get('default_code') or '').strip()
+                if c:
+                    code_to_tmpl[c] = t['id']
+
+        # 4. Search product.product by barcode for items not found by code
+        all_bcs = list(set(it['barcode'] for it in clean_items if it['barcode']))
+        bc_to_tmpl = {}
+        for i in range(0, len(all_bcs), batch_size):
+            batch = all_bcs[i:i + batch_size]
+            prods = models.execute_kw(
+                self.db, self.uid, self.password,
+                'product.product', 'search_read',
+                [[['barcode', 'in', batch]]],
+                {'fields': ['id', 'barcode', 'product_tmpl_id']}
+            )
+            for p in prods:
+                b = (p.get('barcode') or '').strip()
+                t_arr = p.get('product_tmpl_id')
+                if b and t_arr and isinstance(t_arr, (list, tuple)) and len(t_arr) > 0:
+                    bc_to_tmpl[b] = t_arr[0]
+
+        # 5. Map items to templates
+        resolved_items = []
+        not_found_items = []
+        for it in clean_items:
+            tmpl_id = code_to_tmpl.get(it['code']) or bc_to_tmpl.get(it['barcode'])
+            if tmpl_id:
+                resolved_items.append({
+                    'tmpl_id': tmpl_id,
+                    'cost': it['cost'],
+                    'name': it['name'],
+                    'code': it['code'] or it['barcode']
+                })
+            else:
+                not_found_items.append(it['code'] or it['barcode'])
+
+        notify(40, f"تم مطابقة {len(resolved_items)} صنف في أودو ({len(not_found_items)} صنف غير معرّف بأودو بعد). جاري فحص أسعار المورد المسجلة...")
+
+        if not resolved_items:
+            return {
+                'success': True,
+                'message': f"لم يتم العثور على أي من الأصناف في أودو. يرجى أولاً رفع ملف الأصناف (Odooimport.xlsx) لتعريفها في أودو ثم إعادة المحاولة.",
+                'created_count': 0,
+                'updated_count': 0,
+                'unchanged_count': 0,
+                'not_found_count': len(not_found_items),
+                'not_found_items': not_found_items,
+                'errors': []
+            }
+
+        # 6. Fetch existing product.supplierinfo for these templates and this partner
+        target_tmpl_ids = list(set(it['tmpl_id'] for it in resolved_items))
+        existing_suppinfo = {}
+        for i in range(0, len(target_tmpl_ids), batch_size):
+            batch = target_tmpl_ids[i:i + batch_size]
+            s_domain = [
+                ['partner_id', '=', partner_id],
+                ['product_tmpl_id', 'in', batch]
+            ]
+            infos = models.execute_kw(
+                self.db, self.uid, self.password,
+                'product.supplierinfo', 'search_read',
+                [s_domain],
+                {'fields': ['id', 'product_tmpl_id', 'price']}
+            )
+            for s in infos:
+                t_arr = s.get('product_tmpl_id')
+                if t_arr and isinstance(t_arr, (list, tuple)) and len(t_arr) > 0:
+                    tid = t_arr[0]
+                    if tid not in existing_suppinfo:
+                        existing_suppinfo[tid] = {
+                            'id': s['id'],
+                            'price': float(s.get('price') or 0.0)
+                        }
+
+        # 7. Create or Update supplierinfo
+        notify(65, "جاري تحديث وإنشاء سطور أسعار المورد في خانة المشتريات...")
+        created_count = 0
+        updated_count = 0
+        unchanged_count = 0
+        errors = []
+
+        to_create = []
+        to_update = []
+
+        for it in resolved_items:
+            tid = it['tmpl_id']
+            cost = it['cost']
+            if tid in existing_suppinfo:
+                ex = existing_suppinfo[tid]
+                if abs(ex['price'] - cost) > 0.0001:
+                    to_update.append((ex['id'], cost))
+                else:
+                    unchanged_count += 1
+            else:
+                to_create.append({
+                    'partner_id': partner_id,
+                    'product_tmpl_id': tid,
+                    'price': cost,
+                    'min_qty': 1.0,
+                    'delay': 0,
+                    'currency_id': 150,  # SAR
+                    'company_id': 1
+                })
+                # Add to existing_suppinfo so duplicates in the same batch don't create multiple lines
+                existing_suppinfo[tid] = {'id': -1, 'price': cost}
+
+        # Execute updates
+        for s_id, new_price in to_update:
+            try:
+                models.execute_kw(
+                    self.db, self.uid, self.password,
+                    'product.supplierinfo', 'write',
+                    [[s_id], {'price': new_price}]
+                )
+                updated_count += 1
+            except Exception as e:
+                errors.append(f"خطأ أثناء تحديث السعر للسجل {s_id}: {e}")
+
+        # Execute creations in batches
+        create_batch_size = 50
+        for i in range(0, len(to_create), create_batch_size):
+            batch = to_create[i:i + create_batch_size]
+            try:
+                models.execute_kw(
+                    self.db, self.uid, self.password,
+                    'product.supplierinfo', 'create',
+                    [batch]
+                )
+                created_count += len(batch)
+            except Exception as e:
+                for item_vals in batch:
+                    try:
+                        models.execute_kw(
+                            self.db, self.uid, self.password,
+                            'product.supplierinfo', 'create',
+                            [item_vals]
+                        )
+                        created_count += 1
+                    except Exception as e2:
+                        errors.append(f"خطأ أثناء إنشاء سعر المورد للصنف {item_vals.get('product_tmpl_id')}: {e2}")
+
+        notify(100, f"✅ اكتملت المزامنة بنجاح: {created_count} جديد، {updated_count} تم تحديثه، {unchanged_count} بدون تغيير.")
+
+        msg = (
+            f"اكتملت مزامنة أسعار المورد ({partner_display}) بنجاح!\n"
+            f"• أسطر جديدة تم إنشاؤها: {created_count}\n"
+            f"• أسطر تم تحديث سعرها: {updated_count}\n"
+            f"• أسطر متطابقة مسبقاً: {unchanged_count}\n"
+        )
+        if not_found_items:
+            msg += f"• أصناف لم يُعثر عليها بأودو: {len(not_found_items)} (يجب رفع ملف الأصناف Odooimport.xlsx لتعريفها أولاً)\n"
+        if errors:
+            msg += f"⚠️ حدثت {len(errors)} أخطاء أثناء المزامنة."
+
+        return {
+            'success': True,
+            'message': msg,
+            'partner_name': partner_display,
+            'partner_id': partner_id,
+            'total_items': len(clean_items),
+            'created_count': created_count,
+            'updated_count': updated_count,
+            'unchanged_count': unchanged_count,
+            'not_found_count': len(not_found_items),
+            'not_found_items': not_found_items,
+            'errors': errors
         }
