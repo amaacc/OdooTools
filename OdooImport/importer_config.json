@@ -1,0 +1,307 @@
+{
+  "settings": {
+    "default_profit_margin": 0.2,
+    "default_tax_rate": 0.15,
+    "default_tag": "SG0040-OTHER PRODUCTS",
+    "default_category": "SCP-Skin Care Products",
+    "uom_po_id": "PC",
+    "uom_so_id": "PC",
+    "customer_tax_id": 1,
+    "vendor_tax_id": 3,
+    "type": "Storable Product",
+    "invoice_policy": "Delivered quantities",
+    "available_in_pos": true,
+    "sequence": 1,
+    "customer_tax_id_zero": 45,
+    "vendor_tax_id_zero": 9
+  },
+  "tax_rules": {
+    "taxable_keywords": [
+      "15",
+      "yes",
+      "نعم",
+      "خاضع",
+      "خاضعة",
+      "vat",
+      "tax",
+      "taxable",
+      "شامل",
+      "مضافة",
+      "مفروض",
+      "مفروضة",
+      "standard",
+      "ضريبة",
+      "قيمة مضافة"
+    ],
+    "exempt_keywords": [
+      "معف",
+      "غير خاضع",
+      "غير خاضعة",
+      "بدون",
+      "exempt",
+      "zero",
+      "0%",
+      "لا",
+      "no"
+    ]
+  },
+  "tag_suffix_rules": {
+    "SG0040": "8",
+    "SG0010": "4",
+    "SG0060": "4",
+    "SG0020": "3",
+    "SG0030": "3"
+  },
+  "category_prefix_rules": {
+    "All": "4606-",
+    "All / Expenses": "4606-",
+    "GCP-General Cosmetics Products": "4303-",
+    "GCS-General Cosmetics Samples": "4303-",
+    "GCT-General Cosmetics Testers": "4303-",
+    "GIP-General Imported Products": "4505-",
+    "GP-GENERAL PRODUCT": "4606-",
+    "GPS-GENERAL PRODUCT SAMPLE": "4606-",
+    "GPT-GENERAL PRODUCT TESTER": "4606-",
+    "HCP-Hair Care Products": "4505-",
+    "HCS-Hair Care Samples": "4505-",
+    "HCT-Hair Care Testers": "4505-",
+    "HHP-Houshold Products": "4404-",
+    "HHS-Houshold Samples": "4404-",
+    "HHT-Houshold Testers": "4404-",
+    "HQP-High Quality Perfumes": "4101-",
+    "HQS-High Quality Samples": "4101-",
+    "HQT-High Quality Testers": "4101-",
+    "MAP-Mass Quality Perfumes": "4202-",
+    "MAS-Mass Quality Samples": "4202-",
+    "MAT-Mass Quality Testers": "4202-",
+    "MDP-Medium Quality Perfumes": "4202-",
+    "MDS-Medium Quality Samples": "4202-",
+    "MDT-Medium Quality Testers": "4202-",
+    "PSP-Personal Care Products": "4505-",
+    "PSS-Personal Care Samples": "4505-",
+    "PST-Personal Care Testers": "4505-",
+    "SCP-Skin Care Products": "4505-",
+    "SCS-Skin Care": "4505-",
+    "SCS-Skin Care Samples": "4505-",
+    "SCT-Skin Care Testers": "4505-",
+    "SET-GIFT COLLECT": "4101-",
+    "STF-Display Stand": "4606-"
+  },
+  "internal_reference_ranges": [
+    {
+      "category_code": "All",
+      "tag_code": "ALL",
+      "prefix": "4606-",
+      "description": "كافة المنتجات العامة"
+    },
+    {
+      "category_code": "All / Expenses",
+      "tag_code": "ALL",
+      "prefix": "4606-",
+      "description": "المصروفات العامة"
+    },
+    {
+      "category_code": "GCP-General Cosmetics Products",
+      "tag_code": "ALL",
+      "prefix": "4303-",
+      "description": "مستحضرات تجميل عامة"
+    },
+    {
+      "category_code": "GCS-General Cosmetics Samples",
+      "tag_code": "ALL",
+      "prefix": "4303-",
+      "description": "عينات تجميل عامة"
+    },
+    {
+      "category_code": "GCT-General Cosmetics Testers",
+      "tag_code": "ALL",
+      "prefix": "4303-",
+      "description": "تستر تجميل عامة"
+    },
+    {
+      "category_code": "GIP-General Imported Products",
+      "tag_code": "ALL",
+      "prefix": "4505-",
+      "description": "منتجات مستوردة عامة"
+    },
+    {
+      "category_code": "GP-GENERAL PRODUCT",
+      "tag_code": "ALL",
+      "prefix": "4606-",
+      "description": "منتجات عامة"
+    },
+    {
+      "category_code": "GPS-GENERAL PRODUCT SAMPLE",
+      "tag_code": "ALL",
+      "prefix": "4606-",
+      "description": "عينات منتجات عامة"
+    },
+    {
+      "category_code": "GPT-GENERAL PRODUCT TESTER",
+      "tag_code": "ALL",
+      "prefix": "4606-",
+      "description": "تستر منتجات عامة"
+    },
+    {
+      "category_code": "HCP-Hair Care Products",
+      "tag_code": "ALL",
+      "prefix": "4505-",
+      "description": "منتجات العناية بالشعر"
+    },
+    {
+      "category_code": "HCS-Hair Care Samples",
+      "tag_code": "ALL",
+      "prefix": "4505-",
+      "description": "عينات العناية بالشعر"
+    },
+    {
+      "category_code": "HCT-Hair Care Testers",
+      "tag_code": "ALL",
+      "prefix": "4505-",
+      "description": "تستر العناية بالشعر"
+    },
+    {
+      "category_code": "HHP-Houshold Products",
+      "tag_code": "ALL",
+      "prefix": "4404-",
+      "description": "منتجات منزلية"
+    },
+    {
+      "category_code": "HHS-Houshold Samples",
+      "tag_code": "ALL",
+      "prefix": "4404-",
+      "description": "عينات منتجات منزلية"
+    },
+    {
+      "category_code": "HHT-Houshold Testers",
+      "tag_code": "ALL",
+      "prefix": "4404-",
+      "description": "تستر منتجات منزلية"
+    },
+    {
+      "category_code": "HQP-High Quality Perfumes",
+      "tag_code": "ALL",
+      "prefix": "4101-",
+      "description": "عطور عالية الجودة"
+    },
+    {
+      "category_code": "HQS-High Quality Samples",
+      "tag_code": "ALL",
+      "prefix": "4101-",
+      "description": "عينات عطور عالية الجودة"
+    },
+    {
+      "category_code": "HQT-High Quality Testers",
+      "tag_code": "ALL",
+      "prefix": "4101-",
+      "description": "تستر عطور عالية الجودة"
+    },
+    {
+      "category_code": "MAP-Mass Quality Perfumes",
+      "tag_code": "ALL",
+      "prefix": "4202-",
+      "description": "عطور اقتصادية عامة"
+    },
+    {
+      "category_code": "MAS-Mass Quality Samples",
+      "tag_code": "ALL",
+      "prefix": "4202-",
+      "description": "عينات عطور اقتصادية"
+    },
+    {
+      "category_code": "MAT-Mass Quality Testers",
+      "tag_code": "ALL",
+      "prefix": "4202-",
+      "description": "تستر عطور اقتصادية"
+    },
+    {
+      "category_code": "MDP-Medium Quality Perfumes",
+      "tag_code": "ALL",
+      "prefix": "4202-",
+      "description": "عطور متوسطة الجودة"
+    },
+    {
+      "category_code": "MDS-Medium Quality Samples",
+      "tag_code": "ALL",
+      "prefix": "4202-",
+      "description": "عينات عطور متوسطة الجودة"
+    },
+    {
+      "category_code": "MDT-Medium Quality Testers",
+      "tag_code": "ALL",
+      "prefix": "4202-",
+      "description": "تستر عطور متوسطة الجودة"
+    },
+    {
+      "category_code": "PSP-Personal Care Products",
+      "tag_code": "ALL",
+      "prefix": "4505-",
+      "description": "منتجات العناية الشخصية"
+    },
+    {
+      "category_code": "PSS-Personal Care Samples",
+      "tag_code": "ALL",
+      "prefix": "4505-",
+      "description": "عينات العناية الشخصية"
+    },
+    {
+      "category_code": "PST-Personal Care Testers",
+      "tag_code": "ALL",
+      "prefix": "4505-",
+      "description": "تستر العناية الشخصية"
+    },
+    {
+      "category_code": "SCP-Skin Care Products",
+      "tag_code": "ALL",
+      "prefix": "4505-",
+      "description": "منتجات العناية بالبشرة"
+    },
+    {
+      "category_code": "SCS-Skin Care",
+      "tag_code": "ALL",
+      "prefix": "4505-",
+      "description": "العناية بالبشرة"
+    },
+    {
+      "category_code": "SCS-Skin Care Samples",
+      "tag_code": "ALL",
+      "prefix": "4505-",
+      "description": "عينات العناية بالبشرة"
+    },
+    {
+      "category_code": "SCT-Skin Care Testers",
+      "tag_code": "ALL",
+      "prefix": "4505-",
+      "description": "تستر العناية بالبشرة"
+    },
+    {
+      "category_code": "SET-GIFT COLLECT",
+      "tag_code": "ALL",
+      "prefix": "4101-",
+      "description": "أطقم ومجموعات الهدايا"
+    },
+    {
+      "category_code": "STF-Display Stand",
+      "tag_code": "ALL",
+      "prefix": "4606-",
+      "description": "ستاندات العرض"
+    }
+  ],
+  "category_aliases": {
+    "skin care": "SCP-Skin Care Products",
+    "skincare": "SCP-Skin Care Products",
+    "face mask": "SCP-Skin Care Products",
+    "face cream": "SCP-Skin Care Products",
+    "eye & lash care": "SCP-Skin Care Products",
+    "hair care": "HCP-Hair Care Products",
+    "haircare": "HCP-Hair Care Products",
+    "cosmetics": "GCP-General Cosmetics Products",
+    "general cosmetics": "GCP-General Cosmetics Products",
+    "health supplements": "GP-GENERAL PRODUCT",
+    "supplements": "GP-GENERAL PRODUCT",
+    "weight management": "GP-GENERAL PRODUCT",
+    "perfumes": "HQP-High Quality Perfumes",
+    "perfume": "HQP-High Quality Perfumes",
+    "personal care": "PSP-Personal Care Products"
+  }
+}
